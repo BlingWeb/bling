@@ -291,7 +291,14 @@ class Session:
                     self.page.locator(css).fill(val)
         elif country and sel:
             self._select_proxy_country(sel, country)
-        self.page.locator(f"{screen} .do-connect").first.click(timeout=4000)
+        # Click the apply button: "Connect" on a fresh screen, "Set Location" if the account
+        # was already connected to a remembered proxy. Match by text so a class change won't break.
+        for btn in self.page.locator(f"{screen} button").all():
+            if btn.is_visible() and btn.inner_text().strip().lower() in ("connect", "set location"):
+                btn.click(timeout=4000)
+                break
+        else:
+            raise BlingError(f"couldn't find the connect button on the {kind} proxy screen")
         self.page.wait_for_timeout(800)
 
     def _select_proxy_country(self, sel: str, country: str) -> None:
