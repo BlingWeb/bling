@@ -137,6 +137,21 @@ def test_login_refused_while_a_session_is_open(shell_with_fake):
     assert "before opening a session" in str(sh._error)
 
 
+def test_typed_eof_char_exits():
+    # Windows echoes Ctrl-D as \x04 into the line instead of raising EOFError; treat it as quit.
+    sh = BlingShell()
+    assert sh.onecmd("\x04") is True
+    assert sh._error is None  # exiting is not an error
+
+
+def test_unknown_command_still_reports_error():
+    sh = BlingShell()
+    result = sh.onecmd("bogus --flag")
+    assert result is None  # does not exit
+    assert sh._error is not None
+    assert "unknown command: bogus --flag" in str(sh._error)
+
+
 def test_unknown_command_sets_error():
     sh = BlingShell()
     sh.onecmd("frobnicate the thing")

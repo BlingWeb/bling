@@ -40,6 +40,10 @@ _NO_RECORD = frozenset({"login", "record", "play", "quit", "exit", "EOF", "help"
 # Proxy kinds Browserling offers, for `help proxy` and tab completion.
 _PROXY_KINDS = ("datacenter", "residential", "mobile", "tor")
 
+# The end-of-input key differs by platform — Ctrl-D signals EOF on Unix, Ctrl-Z + Enter on
+# Windows. Used in the "how to exit" hints so we never tell a Windows user to press Ctrl-D.
+_EOF_HINT = "Ctrl-Z then Enter" if os.name == "nt" else "Ctrl-D"
+
 # Order verbs appear in the `help` table (grouped by workflow, not alphabetical).
 _HELP_ORDER = (
     "login", "open", "navigate", "proxy", "resolution", "focus", "key", "type", "type_env",
@@ -204,10 +208,19 @@ class BlingShell(cmd.Cmd):
         """Do nothing on a blank line (cmd.Cmd's default re-runs the last command)."""
         return False
 
-    def default(self, line: str) -> None:
-        """Unknown verb — report it and mark an error so a playback aborts here too."""
-        self._error = BlingError(f"unknown command: {line.strip()}")
+    def default(self, line: str):
+        """Unknown verb — report it and mark an error so a playback aborts here too.
+
+        A lone EOF keystroke lands here rather than raising EOFError: on Windows, Ctrl-D isn't
+        end-of-input, it just echoes ``\\x04`` into the line. We read that as "exit", so the
+        habit works on every platform.
+        """
+        stripped = line.strip().strip("\x04\x1a")  # drop a stray Ctrl-D (\x04) / Ctrl-Z (\x1a)
+        if not stripped:
+            return self.do_quit("")  # a typed EOF key means "quit"
+        self._error = BlingError(f"unknown command: {stripped}")
         ui.error_panel(self._error)
+        return None
 
     def do_help(self, arg: str) -> None:
         """help [command] — list every command, or show detailed usage for one."""
@@ -223,13 +236,13 @@ class BlingShell(cmd.Cmd):
         ui.command_help(rows)
 
     def cmdloop(self, intro=None) -> None:
-        """Interactive prompt. Ctrl-C returns to the prompt; Ctrl-D or `quit` exits."""
+        """Interactive prompt. Ctrl-C returns to the prompt; an EOF key or `quit` exits."""
         while True:
             try:
                 super().cmdloop(intro=intro)
                 break
             except KeyboardInterrupt:
-                ui.info("\n^C  (Ctrl-D or `quit` to exit)")
+                ui.info(f"\n^C  (type `quit` or press {_EOF_HINT} to exit)")
                 intro = ""  # don't reprint the banner after the first loop
 
     # --- verbs: auth ---------------------------------------------------------
@@ -454,7 +467,7 @@ class BlingShell(cmd.Cmd):
         return True
 
     def do_EOF(self, arg: str) -> bool:
-        """Ctrl-D — close the session and exit the shell."""
+        """EOF (Ctrl-D on Unix, Ctrl-Z then Enter on Windows) — close the session and exit."""
         print()
         return True
 
