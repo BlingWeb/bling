@@ -71,8 +71,16 @@ with bling.Session() as s:           # always a context manager
     s.upload("tool.py")              # push a file into the VM
     s.run("python C:/Users/user/Downloads/tool.py")
     s.download("result.json", "result.json")
-    s.set_proxy("datacenter", country="🇩🇪 Germany")
+    s.set_proxy("datacenter", country="germany")   # matched case-insensitively
     s.screenshot("shot.png")
+```
+
+To see a page the way another country does — for spotting **geo-cloaked** malware that serves
+different content by region — capture it through a proxy and diff the results:
+
+```bash
+bling har evil.example --proxy datacenter --country germany --out de.har
+bling urls de.har        # vs. another country's — the differing requests are the cloaking
 ```
 
 Or drive a session by hand and save it as a replayable script with the **interactive shell**:
@@ -96,6 +104,15 @@ records only its name. Full command reference in [`docs/SHELL.md`](docs/SHELL.md
 All errors subclass `bling.BlingError`; catch a specific one to branch:
 `NotLoggedIn`, `SessionBlocked`, `NotReady`, `Timeout`, `EgressError`. Messages tell you how
 to fix them (e.g. *"Not logged in — run: bling login"*).
+
+## Security
+
+A HAR records **everything** a page did on the wire — request cookies, `Authorization` headers,
+session tokens, and any credentials submitted in a form — all in plaintext. Treat a HAR of a
+logged-in session as sensitive as the login itself: don't commit it, and scrub it before
+sharing. (For analysing hostile pages you never log in, so this rarely bites — but know it.)
+The capture runs in a disposable VM isolated from your machine, so the page's code never touches
+your host.
 
 ## How it works
 

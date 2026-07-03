@@ -41,7 +41,7 @@ Each verb wraps one `Session` method; defaults match the Session defaults.
 | `record on <file>` / `record off` | Toggle recording mid-session. |
 | `play <file>` | Replay a `.bling` file (works from inside the shell too). |
 | `help [cmd]` | Built-in help (reads each verb's docstring). |
-| `quit` / `exit` / Ctrl-D | Close the session and exit. Ctrl-C returns to the prompt. |
+| `quit` / `exit` | Close the session and exit. Ctrl-C returns to the prompt; an EOF key exits too — Ctrl-Z then Enter on Windows, Ctrl-D on Unix. |
 
 ## Worked example: record a login
 
@@ -101,6 +101,53 @@ Replay it any time (reads the same env vars for the secrets):
 ```bash
 bling play login.bling
 ```
+
+## Driving the remote page: clicking and navigation
+
+bling controls two layers, and only one is scriptable by name. Browserling's own controls
+*around* the remote screen — the address box, the menu buttons — are real web elements, so
+`open`, `navigate`, `proxy`, `resolution`, and `end` target them precisely. The page *inside*
+the remote browser is different: bling sees it only as streamed video, so there is no way to
+"click the Sign-in link" by name. You drive it the way you would over a screen-share:
+
+- **To load a URL**, use `navigate <url>` — it reloads inside the current VM, keeping its proxy.
+  `open` also loads a URL, but it starts a *fresh* VM and drops any proxy you had set.
+- **To click something on the page**, take a `screenshot`, open the PNG, read off the pixel
+  position, and `click <x> <y>`. There is no element inspector — it is a picture.
+- **Prefer the keyboard**, which needs no coordinates: `focus` to hand the VM keyboard focus,
+  then `key Tab` between fields, `type` / `type_env` to fill them, `key Enter` to submit, and
+  `key Control+l` to jump to the remote address bar.
+
+Pixel `click` coordinates are brittle across screen sizes, so set a known one with
+`resolution 1920x1080` first if you are scripting clicks.
+
+## Comparing a page across countries (cloaking)
+
+Malware and phishing pages often serve different content by visitor country — harmless in one
+region, hostile in another. To catch that, capture the same page through different proxy exits
+and diff the results. The reliable, one-clean-session-per-country way is from the command line:
+
+```bash
+bling har suspicious.example --proxy datacenter --country germany --out de.har
+bling har suspicious.example --proxy datacenter --country "united states" --out us.har
+bling urls de.har        # vs.  bling urls us.har  — requests that differ are the cloaked behavior
+```
+
+Interactively, do it in one session — set a proxy, capture, switch, capture again. `har`
+records through whatever proxy is active, and `navigate` (not `open`) keeps that proxy on a reload:
+
+```
+open suspicious.example         # establishes the session the proxy attaches to
+proxy datacenter germany
+har suspicious.example de.har    # network activity as served to Germany
+proxy datacenter united states
+har suspicious.example us.har    # ...and to the US
+```
+
+Two real-world notes: many datacenter IPs are outright blocked by anti-abuse services (the page
+hangs or challenges instead of loading — itself a signal), so `residential` or `mobile` exits
+often see what a real victim sees; and HAR capture is always via Firefox, so browser-based
+cloaking is a separate axis you test by changing `open`'s `--browser`.
 
 ## Recording format
 

@@ -22,20 +22,34 @@ h = bling.har("demo.browserling.com", live=True, timeout=60)   # visible, longer
 ### `bling.capture(session, url, *, os="win10", timeout=45) -> HAR`
 Same capture, against a `Session` (opens a fresh session internally — don't `open()` first).
 
+### `bling.capture_here(session, url, *, timeout=45) -> HAR`
+Capture on an **already-open** session, keeping its proxy/state (the session's browser can be
+anything — capture launches its own Firefox in the VM). This is the one to use for cloaking
+analysis: `open` → `set_proxy(country=...)` → `capture_here(url)`, then switch country and repeat.
+
 ### `bling.login(profile=None, *, wait=240) -> None`
 One-time human login — opens headed Chrome; **you** solve the reCAPTCHA. The cookie persists.
 
 ### `bling.__version__` — str
 
 ## `bling.Session`
-One session. **Always a context manager** (`with`) so the remote VM is always released.
+One session, one remote VM. Manage its lifetime either way:
 
 ```python
 Session(profile=None, *, headless=True)   # headless by default; headless=False to watch
+
+with bling.Session() as s:      # context manager — releases the VM on exit (preferred)
+    ...
+
+s = bling.Session().start()     # or drive it step by step (e.g. from a REPL / the shell)
+...
+s.close()                       # release the VM; an atexit guard also frees it if you forget
 ```
 
 | Method | What it does |
 |---|---|
+| `start() -> Session` | Launch the browser for step-by-step use (returns self); `with` calls this for you |
+| `close()` | Release the VM and browser; idempotent, and an `atexit` guard runs it too |
 | `require_login()` | Raise `NotLoggedIn` if the cookie expired |
 | `is_logged_in() -> bool` | Check auth without raising |
 | `open(target, *, os="win10", browser="chrome138", ready_timeout=45) -> str` | Open + wait until the canvas is up; returns `"ready"` |
@@ -91,10 +105,12 @@ All subclass `bling.BlingError`. Messages tell you how to fix them.
 ## CLI
 ```
 bling login
-bling har <url> [--out PATH] [--os win10] [--live]
+bling har <url> [--out PATH] [--os win10] [--live] [--proxy KIND] [--country NAME]
 bling urls <file.har> [--summary]
-bling open <url> [--os ...] [--browser ...] [--live] [-k/--keep-open]
+bling open <url> [--os ...] [--browser ...] [--proxy KIND] [--country NAME] [--live] [-k/--keep-open]
 bling run "<command>" [--live]
+bling shell [--record FILE] [--play FILE] [--headless]      # interactive REPL — see docs/SHELL.md
+bling play <file.bling> [--live]                            # replay a recording, unattended
 bling --version
 
 # --live          shows the browser window (default: headless)
