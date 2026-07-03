@@ -96,7 +96,9 @@ records only its name. Full command reference in [`docs/SHELL.md`](docs/SHELL.md
 ## Docs & examples
 
 - **[`docs/API.md`](docs/API.md)** — the full public API on one page.
-- **[`examples/quickstart.py`](examples/quickstart.py)** — the one-liner + a power-user session.
+- **[`examples/`](examples/README.md)** — runnable walkthroughs: [`quickstart.py`](examples/quickstart.py)
+  (the one-liner + a power-user session) and [`geo_cloaking.py`](examples/geo_cloaking.py)
+  (capture a URL across countries and diff the cloaking).
 - Docstrings are reference docs too: `help(bling.har)`, `help(bling.Session)`, `help(bling.HAR)`.
 
 ## Errors
