@@ -30,13 +30,13 @@ from typing import TextIO
 
 from . import __version__, ui
 from .errors import BlingError
-from .har import HAR, capture_here
+from .har import HAR, arm_capture, capture_count, capture_here, sweep_captures
 from .session import Session, login
 
 # Meta-verbs that control the shell itself — never written to a recording (they don't
 # reconstruct a session, and replaying them would be surprising, recursive, or — for login —
 # pop a headed CAPTCHA window mid-playback).
-_NO_RECORD = frozenset({"login", "record", "play", "quit", "exit", "EOF", "help", "?"})
+_NO_RECORD = frozenset({"login", "capture", "record", "play", "quit", "exit", "EOF", "help", "?"})
 
 # Proxy kinds Browserling offers, for `help proxy` and tab completion.
 _PROXY_KINDS = ("datacenter", "residential", "mobile", "tor")
@@ -48,7 +48,7 @@ _EOF_HINT = "Ctrl-Z then Enter" if os.name == "nt" else "Ctrl-D"
 # Order verbs appear in the `help` table (grouped by workflow, not alphabetical).
 _HELP_ORDER = (
     "login", "open", "navigate", "proxy", "resolution", "focus", "key", "type", "type_env",
-    "click", "run", "upload", "download", "screenshot", "har", "urls", "wait", "end",
+    "click", "run", "upload", "download", "screenshot", "har", "urls", "capture", "wait", "end",
     "record", "play", "quit",
 )
 
@@ -116,6 +116,9 @@ class BlingShell(cmd.Cmd):
         self._rec_path: Path | None = None
         # Set by onecmd/default on failure so a playback loop can abort on first error.
         self._error: BaseException | None = None
+        # Capture mode (record a HAR per page): None, or {"bounds": [(file_index, proxy_label)]}.
+        self._cap: dict | None = None
+        self._proxy_label = "noproxy"
         self.prompt = ui.styled_prompt(recording=False)
 
     def _refresh_prompt(self) -> None:
@@ -295,7 +298,18 @@ class BlingShell(cmd.Cmd):
         if not pos:
             print("usage: navigate <url> [--via panel|remote]")
             return
-        self._need_session().navigate(pos[0], via=opts.get("--via", "panel"))
+        s = self._need_session()
+        if self._cap is not None:
+            # Capture mode drives the instrumented Firefox, whose address bar isn't where the
+            # panel/streamed layout expects — so navigate it by keyboard.
+            s.focus_vm()
+            s.key("Control+l")
+            s.page.wait_for_timeout(400)
+            s.type(pos[0])
+            s.key("Enter")
+            s.page.wait_for_timeout(800)
+            return
+        s.navigate(pos[0], via=opts.get("--via", "panel"))
 
     def do_proxy(self, arg: str) -> None:
         """proxy <kind> [country] — route the session through a proxy/VPN, then wait ready.
@@ -314,6 +328,10 @@ class BlingShell(cmd.Cmd):
             s.set_proxy(kind, country=country)
             state = s.wait_ready(timeout=45)  # re-routing restarts the VM stream
         ui.success(state)
+        self._proxy_label = (f"{kind}-{country}" if country else kind).replace(" ", "-")
+        if self._cap is not None:
+            # Mark that pages captured from here on were served through this proxy.
+            self._cap["bounds"].append((capture_count(s), self._proxy_label))
 
     def do_resolution(self, arg: str) -> None:
         """resolution <WxH> — set the remote screen resolution, e.g. `resolution 1920x1080`."""
@@ -443,6 +461,51 @@ class BlingShell(cmd.Cmd):
             return
         for u in HAR.load(toks[0]).urls():
             print(u)
+
+    def do_capture(self, arg: str) -> None:
+        """capture start | capture save <dir> — record a HAR for every page you visit.
+
+        `capture start` arms an instrumented Firefox; from then on every page you load — by
+        `navigate`, or by clicking through with `click`/`key` — writes its own HAR, and it keeps
+        recording across proxy switches. Use it for malware you have to click through to reach.
+        `capture save <dir>` downloads them all, named by order, host, and the active proxy.
+        """
+        toks = _lex(arg)
+        sub = toks[0] if toks else ""
+        if sub == "start":
+            s = self._ensure_session()
+            with ui.status("arming capture — every page you load will be recorded …"):
+                arm_capture(s)
+            self._cap = {"bounds": [(0, self._proxy_label)]}
+            ui.success("recording — navigate/click through, then `capture save <dir>`")
+        elif sub == "save":
+            if self._cap is None:
+                raise BlingError("not recording — run `capture start` first")
+            out_dir = Path(toks[1]) if len(toks) > 1 else Path(".")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            with ui.status("collecting captured HARs from the VM …"):
+                hars = sweep_captures(self._need_session())
+            manifest = self._save_captures(hars, out_dir)
+            self._cap = None
+            ui.success(f"saved {len(hars)} HAR(s) to {out_dir}")
+            for line in manifest:
+                ui.info(line)
+        else:
+            print("usage: capture start | capture save <dir>")
+
+    def _save_captures(self, hars: list, out_dir: Path) -> list[str]:
+        """Write each captured HAR named `NN-<host>-<proxy>.har`, tagging by the proxy that was
+        active when it was recorded (from the capture-mode boundaries). Returns a manifest."""
+        from .cli import _host
+
+        bounds = self._cap["bounds"]  # [(start_index, proxy_label)], ascending by start_index
+        manifest = []
+        for i, h in enumerate(hars):
+            label = next((lab for start, lab in reversed(bounds) if i >= start), "noproxy")
+            name = f"{i:02d}-{_host(h.url)}-{label}.har"
+            h.save(Path(out_dir) / name)
+            manifest.append(f"{name}  <-  {h.url}  ({len(h)} requests)")
+        return manifest
 
     # --- verbs: control ------------------------------------------------------
     def do_wait(self, arg: str) -> None:

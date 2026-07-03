@@ -36,6 +36,7 @@ Each verb wraps one `Session` method; defaults match the Session defaults.
 | `screenshot [path]` | Save a PNG of the session (default `shot.png`). |
 | `har <url> [out.har]` | Capture the URL's HAR with a fresh Firefox in this session (replaces the current view). Saves `<host>.har` and shows a summary. |
 | `urls <file.har>` | Print every URL a `.har` file requested, one per line (local read, no VM). |
+| `capture start` / `capture save <dir>` | Record a HAR for **every** page you visit, across proxy switches — for malware you must click through to reach. `start` arms it; drive with `navigate`/`click`; `save` downloads them all, tagged by order, host, and active proxy. |
 | `wait <seconds>` | Sleep — an explicit pause you can put in a recording for playback. |
 | `end` | End the Browserling VM. The shell stays open; `open <url>` starts a fresh one. |
 | `record on <file>` / `record off` | Toggle recording mid-session. |
@@ -148,6 +149,27 @@ Two real-world notes: many datacenter IPs are outright blocked by anti-abuse ser
 hangs or challenges instead of loading — itself a signal), so `residential` or `mobile` exits
 often see what a real victim sees; and HAR capture is always via Firefox, so browser-based
 cloaking is a separate axis you test by changing `open`'s `--browser`.
+
+## Capturing a click-through (a HAR per page)
+
+Some payloads only appear after you click through a few pages, and `har <url>` captures just
+one. `capture` records a HAR for *every* page instead. Arm it, then drive through the site —
+each page you load writes its own HAR, and it keeps recording across proxy switches:
+
+```
+open example.com                 # any starting session; capture arms its own Firefox
+capture start
+navigate http://gate.example     # page 1 recorded
+click 512 340                    # click through — the page it lands on is recorded too
+proxy residential germany        # switch exit mid-way; later pages are tagged Germany
+navigate http://gate.example/2   # page 3, as served to Germany
+capture save ./run1
+```
+
+`capture save` downloads them all into `./run1`, named by order, host, and the proxy that was
+active — e.g. `00-gate.example-noproxy.har`, `02-gate.example-residential-germany.har`. In
+capture mode you're driving the recording Firefox, so `navigate` moves *it* (by keyboard), and
+`click`/`key`/`type` act on it as usual; read pixel positions off a `screenshot`.
 
 ## Recording format
 

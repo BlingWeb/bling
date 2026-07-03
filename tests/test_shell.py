@@ -33,6 +33,12 @@ class FakeSession:
     def focus_vm(self):
         self.calls.append(("focus",))
 
+    def set_proxy(self, kind, **kw):
+        self.calls.append(("set_proxy", kind, kw.get("country")))
+
+    def wait_ready(self, **kw):
+        return "ready"
+
 
 @pytest.fixture
 def shell_with_fake():
@@ -201,6 +207,47 @@ def test_har_captures_and_saves(tmp_path, monkeypatch, shell_with_fake):
     assert sh._error is None
     assert captured["url"] == "evil.example"
     assert (tmp_path / "evil.example.har").exists()  # default name derived from the host
+
+
+def test_capture_records_pages_tagged_by_proxy(tmp_path, monkeypatch, shell_with_fake):
+    from bling.har import HAR
+
+    sh = shell_with_fake
+
+    def mk(u):
+        return HAR(
+            {"log": {"creator": {"name": "Firefox"},
+                     "entries": [{"request": {"url": u}, "response": {"status": 200}}]}},
+            u,
+        )
+
+    monkeypatch.setattr("bling.shell.arm_capture", lambda s: None)
+    monkeypatch.setattr("bling.shell.capture_count", lambda s: 2)  # 2 pages before the switch
+    monkeypatch.setattr(
+        "bling.shell.sweep_captures",
+        lambda s: [mk("http://a.example/1"), mk("http://a.example/2"), mk("http://b.example/3")],
+    )
+
+    sh.onecmd("capture start")
+    assert sh._cap is not None and sh._error is None
+    sh.onecmd("proxy datacenter germany")  # records a boundary at page index 2
+    assert sh._error is None
+    sh.onecmd(f'capture save "{tmp_path}"')
+    assert sh._error is None and sh._cap is None  # save resets capture mode
+
+    got = sorted(p.name for p in tmp_path.glob("*.har"))
+    assert got == [
+        "00-a.example-noproxy.har",
+        "01-a.example-noproxy.har",
+        "02-b.example-datacenter-germany.har",  # tagged with the proxy active when captured
+    ]
+
+
+def test_capture_save_without_start_errors(shell_with_fake):
+    sh = shell_with_fake
+    sh.onecmd("capture save .")
+    assert sh._error is not None
+    assert "not recording" in str(sh._error)
 
 
 def test_urls_reads_har_from_disk(tmp_path, capsys):

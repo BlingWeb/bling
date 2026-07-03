@@ -18,7 +18,7 @@ from .errors import (
     SessionBlocked,
     Timeout,
 )
-from .har import HAR, capture, capture_here
+from .har import HAR, arm_capture, capture, capture_count, capture_here, sweep_captures
 from .session import Session, login
 
 __version__ = "0.1.0"
@@ -57,6 +57,9 @@ __all__ = [
     "har",
     "capture",
     "capture_here",
+    "arm_capture",
+    "sweep_captures",
+    "capture_count",
     "login",
     "Session",
     "HAR",

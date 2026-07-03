@@ -10,6 +10,7 @@ will cloak if it detects it.)
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import uuid
 from pathlib import Path
@@ -166,23 +167,33 @@ def capture_here(session: Session, url: str, *, timeout: int = 45) -> HAR:
     return _run_capture(session, url, timeout=timeout)
 
 
-def _run_capture(session: Session, url: str, *, timeout: int = 45) -> HAR:
-    """Run the capture machinery against a session that is already open (the shared core of
-    ``capture`` and ``capture_here``): drop in the instrumented Firefox, navigate, egress the HAR.
+def arm_capture(session: Session) -> None:
+    """Launch an instrumented Firefox in the VM with its network monitor recording, so that
+    **every** page it loads from now writes its own HAR to the VM's Downloads (Firefox
+    auto-numbers them: blhar.har, blhar-1.har, ...). Drive that Firefox, switch proxies freely,
+    then collect the HARs with ``sweep_captures``.
+
+    The session must already be open. The instrumented Firefox is separate from the streamed
+    browser, so drive it by keyboard (``Control+l`` for its address bar) and pixel clicks.
     """
+    if session.page is None:
+        raise BlingError("no open session — call session.open(...) before arm_capture")
     scripts = _render_scripts(uuid.uuid4().hex[:8])
     session.page.wait_for_timeout(5000)
     session.upload_text(scripts["user.js"], "user.js")
     session.upload_text(scripts["launch.bat"], "launch.bat")
     session.transfer_token()  # cache egress token before VM keystrokes
     session.dismiss()  # close the file dialog + reclaim VM focus
-
     session.run_script("launch.bat", sentinel=scripts["launch_done"], timeout=60)
     session.page.wait_for_timeout(9000)  # let Firefox open
-
     session.focus_vm()
-    session.key("Control+Shift+E")  # open the netmonitor (required for auto-export)
+    session.key("Control+Shift+E")  # netmonitor on -> auto-export fires on every page load
     session.page.wait_for_timeout(2500)
+
+
+def _run_capture(session: Session, url: str, *, timeout: int = 45) -> HAR:
+    """Single-page capture: arm the instrumented Firefox, navigate to one URL, egress its HAR."""
+    arm_capture(session)
     session.focus_vm()
     session.key("Control+l")  # focus the address bar
     session.page.wait_for_timeout(600)
@@ -202,3 +213,42 @@ def _run_capture(session: Session, url: str, *, timeout: int = 45) -> HAR:
         return HAR(data, url)
     finally:
         tmp.unlink(missing_ok=True)  # don't leave hostile bodies in /tmp
+
+
+def _har_index(name: str) -> int:
+    """Load order from the auto-uniquified name: blhar.har -> 0, blhar-1.har -> 1, ..."""
+    m = re.search(r"blhar-(\d+)\.har$", name, re.IGNORECASE)
+    return int(m.group(1)) if m else 0
+
+
+def _capture_names(session: Session) -> list[str]:
+    """The HAR files the armed Firefox has written, in load order."""
+    out = session.run(r"dir /b C:\Users\user\Downloads\blhar*.har")
+    names = [ln.strip() for ln in out.splitlines() if ln.strip().lower().endswith(".har")]
+    names.sort(key=_har_index)
+    return names
+
+
+def capture_count(session: Session) -> int:
+    """How many page HARs the armed Firefox has written so far (used to tag by proxy)."""
+    return len(_capture_names(session))
+
+
+def sweep_captures(session: Session) -> list[HAR]:
+    """Download every HAR the armed Firefox has written, oldest page first (see ``arm_capture``).
+    Each returned HAR's ``url`` is recovered from its own first request.
+    """
+    result: list[HAR] = []
+    for name in _capture_names(session):
+        tmp = Path(tempfile.gettempdir()) / f"bling_{uuid.uuid4().hex[:8]}.har"
+        try:
+            session.download(name, tmp)
+            data = json.loads(tmp.read_bytes())
+            try:
+                url = data["log"]["entries"][0]["request"]["url"]
+            except (KeyError, IndexError, TypeError):
+                url = name
+            result.append(HAR(data, url))
+        finally:
+            tmp.unlink(missing_ok=True)
+    return result

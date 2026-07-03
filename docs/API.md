@@ -27,6 +27,12 @@ Capture on an **already-open** session, keeping its proxy/state (the session's b
 anything — capture launches its own Firefox in the VM). This is the one to use for cloaking
 analysis: `open` → `set_proxy(country=...)` → `capture_here(url)`, then switch country and repeat.
 
+### `bling.arm_capture(session) -> None` · `bling.sweep_captures(session) -> list[HAR]`
+Multi-page capture, for click-throughs. `arm_capture` launches an instrumented Firefox that
+writes a HAR on **every** page load; drive it (navigate by keyboard, click, switch proxies),
+then `sweep_captures` downloads them all, oldest page first. `capture_count(session)` reports
+how many have been written so far (used to tag pages by the proxy that was active).
+
 ### `bling.login(profile=None, *, wait=240) -> None`
 One-time human login — opens headed Chrome; **you** solve the reCAPTCHA. The cookie persists.
 
