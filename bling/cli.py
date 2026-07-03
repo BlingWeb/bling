@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import HAR, Session, __version__, har, login, ui
+from . import HAR, Session, __version__, capture_here, har, login, ui
 from .errors import BlingError
 from .shell import run_shell
 
@@ -57,6 +57,13 @@ def main(argv=None) -> int:
     p.add_argument("--out", default=None, help="output .har (default: <host>.har)")
     p.add_argument("--os", default="win10")
     p.add_argument("--live", action="store_true", help="show the browser window")
+    p.add_argument(
+        "--proxy",
+        choices=("datacenter", "residential", "mobile", "tor"),
+        default=None,
+        help="capture through a proxy/VPN of this kind (to see geo-cloaked content)",
+    )
+    p.add_argument("--country", default=None, help="proxy exit country, e.g. 'germany'")
 
     p = sub.add_parser("open", help="open a session, wait ready, screenshot (or keep open)")
     p.add_argument("url")
@@ -107,8 +114,20 @@ def main(argv=None) -> int:
             return 0
         if args.cmd == "har":
             dest = args.out or _host(args.url) + ".har"
-            with ui.status(f"capturing {args.url} …"):
-                h = har(args.url, out=dest, os=args.os, live=args.live)
+            if args.proxy:
+                with Session(headless=not args.live) as s:
+                    s.require_login()
+                    label = args.proxy + (f" ({args.country})" if args.country else "")
+                    with ui.status(f"opening a session, routing through {label} …"):
+                        s.open("example.com", os=args.os, browser="firefox")
+                        s.set_proxy(args.proxy, country=args.country)
+                        s.wait_ready(timeout=45)
+                    with ui.status(f"capturing {args.url} through the {args.proxy} proxy …"):
+                        h = capture_here(s, args.url)
+                h.save(dest)
+            else:
+                with ui.status(f"capturing {args.url} …"):
+                    h = har(args.url, out=dest, os=args.os, live=args.live)
             ui.success(f"saved {dest}")
             ui.har_summary(h)
             return 0

@@ -18,7 +18,7 @@ from .errors import (
     SessionBlocked,
     Timeout,
 )
-from .har import HAR, capture
+from .har import HAR, capture, capture_here
 from .session import Session, login
 
 __version__ = "0.1.0"
@@ -56,6 +56,7 @@ def har(
 __all__ = [
     "har",
     "capture",
+    "capture_here",
     "login",
     "Session",
     "HAR",

@@ -30,7 +30,7 @@ from typing import TextIO
 
 from . import __version__, ui
 from .errors import BlingError
-from .har import HAR, capture
+from .har import HAR, capture_here
 from .session import Session, login
 
 # Meta-verbs that control the shell itself — never written to a recording (they don't
@@ -413,10 +413,11 @@ class BlingShell(cmd.Cmd):
 
     # --- verbs: HAR capture ---------------------------------------------------
     def do_har(self, arg: str) -> None:
-        """har <url> [out.har] — capture the URL's HAR with a fresh Firefox in this session.
+        """har <url> [out.har] — capture the URL's HAR in the current session (keeps any proxy).
 
-        The capture launches its own Firefox in the VM, so whatever the session was showing
-        is replaced. Writes <host>.har (or `out.har`) locally and shows a summary.
+        Runs an instrumented Firefox inside the VM you already have, so a proxy set with
+        `proxy` still applies — set a country, then `har <url>`, to record the page as served
+        to that country. Writes <host>.har (or `out.har`) locally and shows a summary.
         """
         toks = _lex(arg)
         if not toks:
@@ -428,8 +429,8 @@ class BlingShell(cmd.Cmd):
 
         dest = toks[1] if len(toks) > 1 else _host(url) + ".har"
         s = self._ensure_session()
-        with ui.status(f"capturing {url} — a fresh Firefox loads it, then exports …"):
-            h = capture(s, url)
+        with ui.status(f"capturing {url} (instrumented Firefox, current proxy) …"):
+            h = capture_here(s, url)
         h.save(dest)
         ui.success(f"saved {dest}")
         ui.har_summary(h)

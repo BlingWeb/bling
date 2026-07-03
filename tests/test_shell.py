@@ -194,7 +194,7 @@ def test_har_captures_and_saves(tmp_path, monkeypatch, shell_with_fake):
         captured["url"] = url
         return fake
 
-    monkeypatch.setattr("bling.shell.capture", fake_capture)
+    monkeypatch.setattr("bling.shell.capture_here", fake_capture)
     monkeypatch.chdir(tmp_path)
     sh = shell_with_fake
     sh.onecmd("har evil.example")

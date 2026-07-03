@@ -133,8 +133,8 @@ def capture(session: Session, url: str, *, os: str = "win10", timeout: int = 45)
     """Capture ``url``'s HAR using ``session`` (which must already be logged in).
 
     Note: this **opens a fresh session** internally (calls ``session.open``), so don't open
-    one yourself first — it would be replaced. Prefer the top-level ``bling.har(url)`` for the
-    one-liner; use this when you want to keep the same ``Session`` for further work afterward.
+    one yourself first — it would be replaced, and any proxy you set would be lost. To keep a
+    proxy (or other session state), use ``capture_here`` on an already-open session instead.
 
     After navigating we poll for the auto-exported HAR until it appears and its size settles
     (robust to slow pages, fast for quick ones); ``timeout`` bounds that wait.
@@ -143,10 +143,34 @@ def capture(session: Session, url: str, *, os: str = "win10", timeout: int = 45)
     ...     s.require_login()
     ...     h = bling.capture(s, "demo.browserling.com")
     """
+    session.open("example.com", os=os, browser="firefox")  # benign start; our own FF loads it
+    return _run_capture(session, url, timeout=timeout)
+
+
+def capture_here(session: Session, url: str, *, timeout: int = 45) -> HAR:
+    """Capture ``url``'s HAR on the session that's **already open** — keeping its proxy and state.
+
+    Unlike ``capture`` / ``bling.har`` (which open their own fresh session and so drop any proxy),
+    this launches the instrumented Firefox in the VM you already have. Use it to record how a page
+    behaves through a chosen proxy country — set the proxy, then capture, then switch and capture
+    again — which is how you catch a site that cloaks its content by geography.
+
+    >>> with bling.Session() as s:                       # doctest: +SKIP
+    ...     s.require_login()
+    ...     s.open("example.com", browser="firefox")
+    ...     s.set_proxy("datacenter", country="germany")
+    ...     h = bling.capture_here(s, "https://example.com")
+    """
+    if session.page is None:
+        raise BlingError("no open session — call session.open(...) before capture_here")
+    return _run_capture(session, url, timeout=timeout)
+
+
+def _run_capture(session: Session, url: str, *, timeout: int = 45) -> HAR:
+    """Run the capture machinery against a session that is already open (the shared core of
+    ``capture`` and ``capture_here``): drop in the instrumented Firefox, navigate, egress the HAR.
+    """
     scripts = _render_scripts(uuid.uuid4().hex[:8])
-    session.open(
-        "example.com", os=os, browser="firefox"
-    )  # benign start; our own FF loads the target
     session.page.wait_for_timeout(5000)
     session.upload_text(scripts["user.js"], "user.js")
     session.upload_text(scripts["launch.bat"], "launch.bat")
