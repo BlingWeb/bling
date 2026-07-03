@@ -17,9 +17,22 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import Session, __version__, har, login
+from . import Session, __version__, har, login, ui
 from .errors import BlingError
 from .shell import run_shell
+
+
+def _wait_until_closed(s) -> None:
+    """Park on a --keep-open session with a live elapsed timer until the window closes."""
+    start = time.monotonic()
+    try:
+        with ui.status("session open — close the window (or Ctrl-C here) to end") as st:
+            while not s.page.is_closed():
+                time.sleep(0.5)
+                elapsed = int(time.monotonic() - start)
+                st.update(f"session open · {elapsed}s — close the window to end")
+    except KeyboardInterrupt:
+        pass
 
 
 def _host(url: str) -> str:
@@ -88,40 +101,39 @@ def main(argv=None) -> int:
             login()
             return 0
         if args.cmd == "har":
-            out = args.out or _host(args.url) + ".har"
-            h = har(args.url, out=out, os=args.os, live=args.live)
-            print(f"OK: {out} ({len(h)} entries, creator {h.creator})")
+            dest = args.out or _host(args.url) + ".har"
+            with ui.status(f"capturing {args.url} …"):
+                h = har(args.url, out=dest, os=args.os, live=args.live)
+            ui.success(f"saved {dest}")
+            ui.har_summary(h)
             return 0
         if args.cmd == "open":
             live = args.live or args.keep_open  # keep-open is useless headless
             with Session(headless=not live) as s:
                 s.require_login()
-                state = s.open(args.url, os=args.os, browser=args.browser)
+                with ui.status(f"opening {args.url} on {args.os}/{args.browser} …"):
+                    state = s.open(args.url, os=args.os, browser=args.browser)
                 if args.proxy:
-                    print(f"setting {args.proxy} proxy"
-                          + (f" (country: {args.country})" if args.country else "")
-                          + " ...")
-                    s.set_proxy(args.proxy, country=args.country)
-                    s.wait_ready(timeout=45)  # re-route restarts the VM stream
+                    label = f"{args.proxy} proxy" + (f" ({args.country})" if args.country else "")
+                    with ui.status(f"routing through {label} …"):
+                        s.set_proxy(args.proxy, country=args.country)
+                        s.wait_ready(timeout=45)  # re-route restarts the VM stream
+                ui.success(f"{state}: {args.url} on {args.os}/{args.browser}")
                 if args.keep_open:
-                    print(f"{state}: {args.url} on {args.os}/{args.browser}")
-                    print("session is open — close the browser window (or Ctrl-C here) to end it")
                     # Poll the outer page; closing the window flips is_closed() True. Robust
                     # in any context (TTY, pipe, background) — no stdin required.
-                    try:
-                        while not s.page.is_closed():
-                            time.sleep(0.5)
-                    except KeyboardInterrupt:
-                        pass
+                    _wait_until_closed(s)
                 else:
-                    shot = s.screenshot(Path("_explore/session.png"))
-                    print(f"{state}: {args.url} on {args.os}/{args.browser} -> {shot}")
+                    print(s.screenshot(Path("_explore/session.png")))  # saved path -> stdout
             return 0
         if args.cmd == "run":
             with Session(headless=not args.live) as s:
                 s.require_login()
-                s.open("example.com", os=args.os, browser=args.browser)
-                print(s.run(args.command))
+                with ui.status("opening session …"):
+                    s.open("example.com", os=args.os, browser=args.browser)
+                with ui.status(f"running: {args.command} …"):
+                    output = s.run(args.command)
+                print(output)  # the command's output is data -> stdout, unstyled
             return 0
         if args.cmd == "shell":
             # Interactive by default shows the browser; --headless overrides.
@@ -130,7 +142,7 @@ def main(argv=None) -> int:
             # Unattended replay: headless unless --live; exits when the file ends.
             return run_shell(play=args.file, headless=not args.live, exit_after_play=True)
     except BlingError as e:
-        print(f"error: {e}", file=sys.stderr)
+        ui.error_panel(e)
         return 1
     return 0
 
