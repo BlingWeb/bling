@@ -69,6 +69,7 @@ Thin, introspectable wrapper over the HAR dict.
 
 | Member | |
 |---|---|
+| `HAR.load(path) -> HAR` | read a `.har` file from disk (from `bling har` or any browser's DevTools) |
 | `har.entries` | list of HAR entry dicts |
 | `har.creator` | producing tool, e.g. `"Firefox"` |
 | `har.urls()` | every requested URL, in order |
@@ -91,6 +92,7 @@ All subclass `bling.BlingError`. Messages tell you how to fix them.
 ```
 bling login
 bling har <url> [--out PATH] [--os win10] [--live]
+bling urls <file.har> [--summary]
 bling open <url> [--os ...] [--browser ...] [--live] [-k/--keep-open]
 bling run "<command>" [--live]
 bling --version

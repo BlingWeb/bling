@@ -14,6 +14,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # find ./bling without install
 
 from bling.cli import _host
+from bling.errors import BlingError
 from bling.har import HAR, _render_scripts
 from bling.session import _parse_curl_token
 
@@ -90,6 +91,34 @@ def test_har_save_roundtrip(sample_har, tmp_path):
     out = sample_har.save(tmp_path / "x.har")
     assert out.exists()
     assert json.loads(out.read_text())["log"]["creator"]["name"] == "Firefox"
+
+
+def test_har_load_roundtrip(sample_har, tmp_path):
+    path = sample_har.save(tmp_path / "x.har")
+    h = HAR.load(path)
+    assert h.urls() == sample_har.urls()
+    assert h.url == "https://demo.browserling.com/"  # recovered from the first entry
+
+
+def test_har_load_rejects_non_har_json(tmp_path):
+    p = tmp_path / "not.har"
+    p.write_text('{"hello": "world"}')
+    with pytest.raises(BlingError, match="not a HAR"):
+        HAR.load(p)
+
+
+def test_har_load_rejects_missing_file(tmp_path):
+    with pytest.raises(BlingError, match="cannot read"):
+        HAR.load(tmp_path / "absent.har")
+
+
+def test_cli_urls_prints_one_per_line(sample_har, tmp_path, capsys):
+    from bling.cli import main
+
+    path = sample_har.save(tmp_path / "x.har")
+    assert main(["urls", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines() == ["https://demo.browserling.com/", "https://x.example/a.js"]
 
 
 # --- cli._host ----------------------------------------------------------

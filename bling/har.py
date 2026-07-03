@@ -78,6 +78,30 @@ class HAR:
         self.data = data
         self.url = url
 
+    @classmethod
+    def load(cls, path) -> HAR:
+        """Read a ``.har`` file from disk (the inverse of ``save``).
+
+        The source URL isn't stored in a HAR, so ``url`` is recovered from the first entry
+        (the page the capture navigated to), falling back to the filename.
+
+        >>> h = HAR.load("demo.har")   # doctest: +SKIP
+        """
+        path = Path(path)
+        try:
+            data = json.loads(path.read_bytes())  # json detects the encoding
+        except OSError as e:
+            raise BlingError(f"cannot read HAR {path}: {e}") from e
+        except json.JSONDecodeError as e:
+            raise BlingError(f"{path} is not valid HAR JSON: {e}") from e
+        if not isinstance(data, dict) or not isinstance(data.get("log", {}).get("entries"), list):
+            raise BlingError(f"{path} is valid JSON but not a HAR (no log.entries list)")
+        try:
+            first = data["log"]["entries"][0]["request"]["url"]
+        except (KeyError, IndexError, TypeError):
+            first = path.name
+        return cls(data, first)
+
     @property
     def entries(self) -> list[dict]:
         """The request/response entries (each a HAR entry dict)."""

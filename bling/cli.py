@@ -2,6 +2,7 @@
 
 bling login
 bling har demo.browserling.com --out demo.har
+bling urls demo.har
 bling open example.com --browser firefox
 bling open https://app.example.com/login --keep-open   # attended session
 bling run "whoami"
@@ -17,7 +18,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
-from . import Session, __version__, har, login, ui
+from . import HAR, Session, __version__, har, login, ui
 from .errors import BlingError
 from .shell import run_shell
 
@@ -80,6 +81,10 @@ def main(argv=None) -> int:
         help="proxy exit country (must match Browserling's dropdown label, e.g. 'United States')",
     )
 
+    p = sub.add_parser("urls", help="print every URL a .har file requested, one per line")
+    p.add_argument("file", help="path to a .har file (from `bling har` or any browser)")
+    p.add_argument("--summary", action="store_true", help="also show the HAR summary table")
+
     p = sub.add_parser("run", help="run a shell command in the VM")
     p.add_argument("command")
     p.add_argument("--os", default="win10")
@@ -106,6 +111,13 @@ def main(argv=None) -> int:
                 h = har(args.url, out=dest, os=args.os, live=args.live)
             ui.success(f"saved {dest}")
             ui.har_summary(h)
+            return 0
+        if args.cmd == "urls":
+            h = HAR.load(args.file)
+            for u in h.urls():
+                print(u)  # data -> stdout, one per line, pipeable
+            if args.summary:
+                ui.har_summary(h)
             return 0
         if args.cmd == "open":
             live = args.live or args.keep_open  # keep-open is useless headless
