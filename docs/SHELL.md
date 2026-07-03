@@ -34,6 +34,8 @@ Each verb wraps one `Session` method; defaults match the Session defaults.
 | `upload <local> [remote_name]` | Push a local file into the VM's Downloads. |
 | `download <remote> <out>` | Pull a file out of the VM to the local machine. |
 | `screenshot [path]` | Save a PNG of the session (default `shot.png`). |
+| `har <url> [out.har]` | Capture the URL's HAR with a fresh Firefox in this session (replaces the current view). Saves `<host>.har` and shows a summary. |
+| `urls <file.har>` | Print every URL a `.har` file requested, one per line (local read, no VM). |
 | `wait <seconds>` | Sleep — an explicit pause you can put in a recording for playback. |
 | `end` | End the Browserling VM. The shell stays open; `open <url>` starts a fresh one. |
 | `record on <file>` / `record off` | Toggle recording mid-session. |

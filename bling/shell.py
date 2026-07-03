@@ -30,6 +30,7 @@ from typing import TextIO
 
 from . import __version__, ui
 from .errors import BlingError
+from .har import HAR, capture
 from .session import Session, login
 
 # Meta-verbs that control the shell itself — never written to a recording (they don't
@@ -47,7 +48,8 @@ _EOF_HINT = "Ctrl-Z then Enter" if os.name == "nt" else "Ctrl-D"
 # Order verbs appear in the `help` table (grouped by workflow, not alphabetical).
 _HELP_ORDER = (
     "login", "open", "navigate", "proxy", "resolution", "focus", "key", "type", "type_env",
-    "click", "run", "upload", "download", "screenshot", "wait", "end", "record", "play", "quit",
+    "click", "run", "upload", "download", "screenshot", "har", "urls", "wait", "end",
+    "record", "play", "quit",
 )
 
 
@@ -408,6 +410,38 @@ class BlingShell(cmd.Cmd):
         path = toks[0] if toks else "shot.png"
         out = self._need_session().screenshot(path)
         print(str(out))
+
+    # --- verbs: HAR capture ---------------------------------------------------
+    def do_har(self, arg: str) -> None:
+        """har <url> [out.har] — capture the URL's HAR with a fresh Firefox in this session.
+
+        The capture launches its own Firefox in the VM, so whatever the session was showing
+        is replaced. Writes <host>.har (or `out.har`) locally and shows a summary.
+        """
+        toks = _lex(arg)
+        if not toks:
+            print("usage: har <url> [out.har]")
+            return
+        url = toks[0]
+        # _host lives in cli (which imports this module) — import lazily to avoid the cycle.
+        from .cli import _host
+
+        dest = toks[1] if len(toks) > 1 else _host(url) + ".har"
+        s = self._ensure_session()
+        with ui.status(f"capturing {url} — a fresh Firefox loads it, then exports …"):
+            h = capture(s, url)
+        h.save(dest)
+        ui.success(f"saved {dest}")
+        ui.har_summary(h)
+
+    def do_urls(self, arg: str) -> None:
+        """urls <file.har> — print every URL a .har file requested, one per line (local read)."""
+        toks = _lex(arg)
+        if not toks:
+            print("usage: urls <file.har>")
+            return
+        for u in HAR.load(toks[0]).urls():
+            print(u)
 
     # --- verbs: control ------------------------------------------------------
     def do_wait(self, arg: str) -> None:

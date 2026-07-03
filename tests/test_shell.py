@@ -171,6 +171,55 @@ def test_type_records_literal_text(tmp_path, shell_with_fake):
     assert ("type", "hello world") in sh._session.calls
 
 
+# --- har / urls (in-shell capture + local read) --------------------------------
+def test_har_usage_without_args():
+    sh = BlingShell()
+    sh.onecmd("har")  # just prints usage; must not error or open a session
+    assert sh._error is None
+    assert sh._session is None
+
+
+def test_har_captures_and_saves(tmp_path, monkeypatch, shell_with_fake):
+    from bling.har import HAR
+
+    fake = HAR(
+        {"log": {"creator": {"name": "Firefox"}, "entries": [
+            {"request": {"url": "https://evil.example/"}, "response": {"status": 200}},
+        ]}},
+        "evil.example",
+    )
+    captured = {}
+
+    def fake_capture(session, url, **kw):
+        captured["url"] = url
+        return fake
+
+    monkeypatch.setattr("bling.shell.capture", fake_capture)
+    monkeypatch.chdir(tmp_path)
+    sh = shell_with_fake
+    sh.onecmd("har evil.example")
+    assert sh._error is None
+    assert captured["url"] == "evil.example"
+    assert (tmp_path / "evil.example.har").exists()  # default name derived from the host
+
+
+def test_urls_reads_har_from_disk(tmp_path, capsys):
+    from bling.har import HAR
+
+    h = HAR(
+        {"log": {"creator": {"name": "Firefox"}, "entries": [
+            {"request": {"url": "https://a.example/"}, "response": {"status": 200}},
+            {"request": {"url": "https://b.example/x.js"}, "response": {"status": 404}},
+        ]}},
+        "a.example",
+    )
+    path = h.save(tmp_path / "x.har")
+    sh = BlingShell()
+    sh.onecmd(f'urls "{path}"')
+    assert sh._error is None
+    assert capsys.readouterr().out.splitlines() == ["https://a.example/", "https://b.example/x.js"]
+
+
 # --- playback (do_play) -------------------------------------------------------
 def test_playback_skips_comments_and_blanks(tmp_path, shell_with_fake):
     rec = tmp_path / "s.bling"
