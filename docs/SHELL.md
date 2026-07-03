@@ -20,6 +20,7 @@ Each verb wraps one `Session` method; defaults match the Session defaults.
 
 | Command | What it does |
 |---|---|
+| `login` | Solve the one-time CAPTCHA login (needed before `open` if the cookie has expired). Opens a headed window; must run before any session is open. |
 | `open <url> [--os win10] [--browser chrome138]` | Open a session and wait until the canvas is ready. Creates the browser (and checks login) on first use. |
 | `navigate <url> [--via panel\|remote]` | Load a new URL — via the control panel (default) or the remote browser's own address bar. |
 | `proxy <kind> [country]` | Route through a proxy/VPN (`datacenter`/`residential`/`mobile`/`tor`), then wait ready. |

@@ -79,7 +79,7 @@ def test_precmd_records_action_verbs(tmp_path):
 def test_precmd_skips_meta_verbs(tmp_path):
     sh = BlingShell()
     sh._open_recording(tmp_path / "s.bling")
-    for line in ["quit", "exit", "play other.bling", "record off", "help", "?"]:
+    for line in ["login", "quit", "exit", "play other.bling", "record off", "help", "?"]:
         sh.precmd(line)
     sh._close_recording()
 
@@ -127,6 +127,14 @@ def test_verb_without_session_errors_cleanly():
     sh.onecmd("proxy mobile")
     assert sh._error is not None
     assert "no session" in str(sh._error)
+
+
+def test_login_refused_while_a_session_is_open(shell_with_fake):
+    # login opens a headed browser on the shared profile, so it must run before `open`.
+    sh = shell_with_fake  # already holds a (fake) session
+    sh.onecmd("login")
+    assert sh._error is not None
+    assert "before opening a session" in str(sh._error)
 
 
 def test_unknown_command_sets_error():

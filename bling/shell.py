@@ -28,16 +28,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
-from . import __version__
+from . import __version__, ui
 from .errors import BlingError
-from .session import Session
+from .session import Session, login
 
 # Meta-verbs that control the shell itself — never written to a recording (they don't
-# reconstruct a session, and replaying them would be surprising or recursive).
-_NO_RECORD = frozenset({"record", "play", "quit", "exit", "EOF", "help", "?"})
+# reconstruct a session, and replaying them would be surprising, recursive, or — for login —
+# pop a headed CAPTCHA window mid-playback).
+_NO_RECORD = frozenset({"login", "record", "play", "quit", "exit", "EOF", "help", "?"})
 
 # Proxy kinds Browserling offers, for `help proxy` and tab completion.
 _PROXY_KINDS = ("datacenter", "residential", "mobile", "tor")
+
+# Order verbs appear in the `help` table (grouped by workflow, not alphabetical).
+_HELP_ORDER = (
+    "login", "open", "navigate", "proxy", "resolution", "focus", "key", "type", "type_env",
+    "click", "run", "upload", "download", "screenshot", "wait", "end", "record", "play", "quit",
+)
 
 
 def _lex(arg: str) -> list[str]:
@@ -103,6 +110,11 @@ class BlingShell(cmd.Cmd):
         self._rec_path: Path | None = None
         # Set by onecmd/default on failure so a playback loop can abort on first error.
         self._error: BaseException | None = None
+        self.prompt = ui.styled_prompt(recording=False)
+
+    def _refresh_prompt(self) -> None:
+        """Keep the prompt's REC marker in sync with whether we're recording."""
+        self.prompt = ui.styled_prompt(recording=self._rec is not None)
 
     # --- session lifecycle --------------------------------------------------
     def _ensure_session(self) -> Session:
@@ -139,12 +151,14 @@ class BlingShell(cmd.Cmd):
         stamp = datetime.now().isoformat(timespec="seconds")
         self._rec.write(f"# bling recording — session {stamp}\n")
         self._rec.flush()
+        self._refresh_prompt()
 
     def _close_recording(self) -> None:
         if self._rec is not None:
             self._rec.close()
             self._rec = None
             self._rec_path = None
+        self._refresh_prompt()
 
     def _record_comment(self, text: str) -> None:
         """Write a ``# comment`` line into the active recording (no-op if not recording)."""
@@ -179,11 +193,11 @@ class BlingShell(cmd.Cmd):
             return super().onecmd(line)
         except BlingError as e:
             self._error = e
-            print(f"error: {e}")
+            ui.error_panel(e)
             return False
         except Exception as e:  # noqa: BLE001 — interactive: show it, stay at the prompt
             self._error = e
-            print(f"error: unexpected {type(e).__name__}: {e}")
+            ui.error_panel(f"unexpected {type(e).__name__}: {e}")
             return False
 
     def emptyline(self) -> bool:
@@ -193,7 +207,20 @@ class BlingShell(cmd.Cmd):
     def default(self, line: str) -> None:
         """Unknown verb — report it and mark an error so a playback aborts here too."""
         self._error = BlingError(f"unknown command: {line.strip()}")
-        print(f"error: unknown command: {line.strip()}")
+        ui.error_panel(self._error)
+
+    def do_help(self, arg: str) -> None:
+        """help [command] — list every command, or show detailed usage for one."""
+        if arg:
+            super().do_help(arg)
+            return
+        rows = []
+        for verb in _HELP_ORDER:
+            doc = (getattr(self, f"do_{verb}").__doc__ or "").strip()
+            first = doc.splitlines()[0] if doc else ""
+            desc = first.split(" — ", 1)[1] if " — " in first else first
+            rows.append((verb, desc))
+        ui.command_help(rows)
 
     def cmdloop(self, intro=None) -> None:
         """Interactive prompt. Ctrl-C returns to the prompt; Ctrl-D or `quit` exits."""
@@ -202,8 +229,24 @@ class BlingShell(cmd.Cmd):
                 super().cmdloop(intro=intro)
                 break
             except KeyboardInterrupt:
-                print("\n^C  (Ctrl-D or `quit` to exit)")
+                ui.info("\n^C  (Ctrl-D or `quit` to exit)")
                 intro = ""  # don't reprint the banner after the first loop
+
+    # --- verbs: auth ---------------------------------------------------------
+    def do_login(self, arg: str) -> None:
+        """login — solve the one-time CAPTCHA login (do this before `open` if the cookie expired).
+
+        Opens a headed Chrome window on the shared profile; you solve the CAPTCHA, the cookie
+        is saved, and later `open` calls are unattended. Must run before any session is open.
+        """
+        if self._session is not None:
+            raise BlingError(
+                "log in before opening a session — a live session holds the browser profile; "
+                "quit and restart the shell, then `login`"
+            )
+        ui.info("opening a login window — solve the CAPTCHA there, then come back here …")
+        login()  # headed Chrome on the shared profile; blocks until solved (or times out)
+        ui.success("logged in — the cookie is saved; `open <url>` will work now")
 
     # --- verbs: session ------------------------------------------------------
     def do_open(self, arg: str) -> None:
@@ -220,11 +263,12 @@ class BlingShell(cmd.Cmd):
             kwargs["os"] = opts["--os"]
         if "--browser" in opts:
             kwargs["browser"] = opts["--browser"]
-        s = self._ensure_session()
-        state = s.open(pos[0], **kwargs)
         os_ = kwargs.get("os", "win10")
         browser = kwargs.get("browser", "chrome138")
-        print(f"{state}: {pos[0]} on {os_}/{browser}")
+        s = self._ensure_session()
+        with ui.status(f"opening {pos[0]} on {os_}/{browser} …"):
+            state = s.open(pos[0], **kwargs)
+        ui.success(f"{state}: {pos[0]} on {os_}/{browser}")
 
     def do_navigate(self, arg: str) -> None:
         """navigate <url> [--via panel|remote] — load a new URL in the running session.
@@ -250,9 +294,11 @@ class BlingShell(cmd.Cmd):
         kind = toks[0]
         country = toks[1] if len(toks) > 1 else None
         s = self._need_session()
-        print(f"setting {kind} proxy" + (f" (country: {country})" if country else "") + " ...")
-        s.set_proxy(kind, country=country)
-        print(s.wait_ready(timeout=45))  # re-routing restarts the VM stream
+        ui.info(f"setting {kind} proxy" + (f" (country: {country})" if country else "") + " ...")
+        with ui.status("routing and waiting for the session to come back …"):
+            s.set_proxy(kind, country=country)
+            state = s.wait_ready(timeout=45)  # re-routing restarts the VM stream
+        ui.success(state)
 
     def do_resolution(self, arg: str) -> None:
         """resolution <WxH> — set the remote screen resolution, e.g. `resolution 1920x1080`."""
@@ -296,7 +342,7 @@ class BlingShell(cmd.Cmd):
         if value is None:
             raise BlingError(f"env var {var} is not set — export it before `type_env {var}`")
         self._need_session().type(value)
-        print(f"(secret typed from env: {var})")
+        ui.info(f"(secret typed from env: {var})")
         self._record_comment(f"(secret typed from env: {var})")
 
     def do_click(self, arg: str) -> None:
@@ -362,18 +408,18 @@ class BlingShell(cmd.Cmd):
     def do_end(self, arg: str) -> None:
         """end — end the Browserling VM. The shell stays open; `open <url>` starts a fresh one."""
         self._need_session().end()
-        print("session ended (shell still open — `open <url>` to start another)")
+        ui.info("session ended (shell still open - `open <url>` to start another)")
 
     def do_record(self, arg: str) -> None:
         """record on <file> | record off — toggle recording typed commands mid-session."""
         toks = _lex(arg)
         if toks and toks[0] == "on" and len(toks) > 1:
             self._open_recording(toks[1])
-            print(f"(recording -> {toks[1]})")
+            ui.success(f"recording -> {toks[1]}")
         elif toks and toks[0] == "off":
             was = self._rec_path
             self._close_recording()
-            print(f"(recording stopped{f': {was}' if was else ''})")
+            ui.info(f"recording stopped{f': {was}' if was else ''}")
         else:
             print("usage: record on <file> | record off")
 
@@ -388,15 +434,16 @@ class BlingShell(cmd.Cmd):
             text = path.read_text(encoding="utf-8")
         except OSError as e:
             raise BlingError(f"cannot read recording {path}: {e}") from e
-        for raw in text.splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue  # skip blanks and comments
-            print(f"play> {line}")
+        stripped = (ln.strip() for ln in text.splitlines())
+        cmds = [ln for ln in stripped if ln and not ln.startswith("#")]
+        total = len(cmds)
+        for i, line in enumerate(cmds, 1):
+            ui.info(f"[{i}/{total}] {line}")
             self.onecmd(line)
             if self._error is not None:
-                print(f"playback aborted at: {line}")
+                ui.info(f"playback aborted at line {i}: {line}")
                 return
+        ui.success(f"replayed {total} command{'' if total == 1 else 's'} from {path.name}")
 
     def do_quit(self, arg: str) -> bool:
         """quit — close the session and exit the shell."""
@@ -446,14 +493,9 @@ def run_shell(
             sh.onecmd(f"play {shlex.quote(play)}")  # onecmd catches errors; won't crash
             if exit_after_play:
                 return 1 if sh._error is not None else 0
-        intro = (
-            f"bling {__version__} — interactive Browserling driver\n"
-            "type `help` to list commands, `help <cmd>` for usage, `quit` to exit"
-        )
-        if record:
-            intro += f"\n(recording -> {record})"
-        sh.cmdloop(intro)
-        print("session closed.")
+        ui.banner(__version__, record)
+        sh.cmdloop()
+        ui.info("session closed.")
         return 0
     finally:
         sh._shutdown()
