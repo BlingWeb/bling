@@ -257,11 +257,16 @@ class Session:
         }.get(kind)
         if card is None:
             raise BlingError(f"unknown proxy kind {kind!r}")
+        # The panel usually opens on a chooser of type cards — click ours to reveal its screen.
+        # But if the account has a remembered proxy it can open on that screen already, with the
+        # chooser card hidden; then there's nothing to click, so only click when it's visible.
+        card_btn = self.page.locator(f".use-btn.{card}").first
         try:
-            self.page.locator(f".use-btn.{card}").first.click(timeout=4000)
+            if card_btn.is_visible():
+                card_btn.click(timeout=4000)
+                self.page.wait_for_timeout(400)
         except PWTimeout as e:
             raise BlingError(f"couldn't open the {kind} proxy screen (.use-btn.{card})") from e
-        self.page.wait_for_timeout(400)
         screen = {
             "datacenter": ".screen-dc",
             "residential": ".screen-res",
