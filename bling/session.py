@@ -246,6 +246,22 @@ class Session:
         kind: ``"datacenter" | "residential" | "mobile" | "tor" | "custom"``.
         """
         self._open_menu("proxy")
+        # The panel opens on a chooser of type cards; each kind's screen (and its country
+        # dropdown) stays hidden until you click that card. So click it first.
+        card = {
+            "datacenter": "use-dc",
+            "residential": "use-res",
+            "mobile": "use-mobile",
+            "tor": "use-tor",
+            "custom": "use-custom",
+        }.get(kind)
+        if card is None:
+            raise BlingError(f"unknown proxy kind {kind!r}")
+        try:
+            self.page.locator(f".use-btn.{card}").first.click(timeout=4000)
+        except PWTimeout as e:
+            raise BlingError(f"couldn't open the {kind} proxy screen (.use-btn.{card})") from e
+        self.page.wait_for_timeout(400)
         screen = {
             "datacenter": ".screen-dc",
             "residential": ".screen-res",
@@ -269,9 +285,26 @@ class Session:
                 if val:
                     self.page.locator(css).fill(val)
         elif country and sel:
-            self.page.locator(sel).select_option(label=country)
+            self._select_proxy_country(sel, country)
         self.page.locator(f"{screen} .do-connect").first.click(timeout=4000)
         self.page.wait_for_timeout(800)
+
+    def _select_proxy_country(self, sel: str, country: str) -> None:
+        """Pick a proxy location by name. The options are labelled with a flag emoji (e.g.
+        ``"🇩🇪 Germany"``), so match a case-insensitive substring rather than the exact label.
+        """
+        loc = self.page.locator(sel)
+        value = loc.evaluate(
+            """(el, c) => {
+                const want = c.toLowerCase();
+                const m = [...el.options].find(o => o.textContent.toLowerCase().includes(want));
+                return m ? m.value : null;
+            }""",
+            country,
+        )
+        if value is None:
+            raise BlingError(f"no proxy location matches {country!r} — check the spelling")
+        loc.select_option(value=value)
 
     # --- file transfer (curl egress) ---------------------------------------
     def upload(self, local_path, remote_name: str | None = None) -> str:

@@ -78,7 +78,7 @@ def main(argv=None) -> int:
     p.add_argument(
         "--country",
         default=None,
-        help="proxy exit country (must match Browserling's dropdown label, e.g. 'United States')",
+        help="proxy exit country, matched case-insensitively, e.g. 'germany' or 'united states'",
     )
 
     p = sub.add_parser("urls", help="print every URL a .har file requested, one per line")
