@@ -2,6 +2,9 @@
 
 One page. Everything public. (Docstrings carry the same info — `help(bling.har)` etc.)
 
+**See also:** [README](../README.md) for install and the quickstart · [`SHELL.md`](SHELL.md)
+for the interactive `bling shell` and record/replay.
+
 ```python
 import bling
 ```
@@ -125,3 +128,6 @@ bling --version
 #                 screenshot. Use for attended flows — e.g. signing into a
 #                 site inside the VM by hand. No TTY required.
 ```
+
+`bling shell` and `bling play` have their own reference — the interactive verbs, the
+`.bling` recording format, and the secrets policy are all in [`SHELL.md`](SHELL.md).

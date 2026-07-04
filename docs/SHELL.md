@@ -1,5 +1,8 @@
 # bling shell — interactive REPL with record + replay
 
+**See also:** [README](../README.md) to get started · [`API.md`](API.md) for the Python
+`Session` API and the rest of the non-interactive `bling` CLI (`har`, `urls`, `open`, `run`, `play`).
+
 `bling shell` is an interactive prompt for driving one Browserling session by hand — like
 `ipython` for bling. You type verbs one at a time (`open`, `proxy`, `navigate`, `type`,
 `key`, `screenshot`), watch each one hit a live VM, and optionally **record** the whole run

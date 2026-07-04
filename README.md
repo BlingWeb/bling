@@ -1,9 +1,33 @@
 # bling
 
-Drive a [Browserling](https://www.browserling.com) sandbox from Python — open a disposable
-remote browser, run shell commands on its VM, move files in and out, and **capture a URL's
-HAR from a real browser** (no CDP, no automation flags). Built to be obvious for humans and
-for AI agents. See [`CODING_STANDARD.md`](CODING_STANDARD.md).
+**Drive a [Browserling](https://www.browserling.com) sandbox from Python** — automate a
+disposable remote browser to triage phishing, malware, and other hostile web pages.
+
+Browserling is an online browser sandbox: a real browser running on a throwaway VM in the
+cloud, walled off from your own machine. Security teams use it to open suspicious links, triage
+phishing emails, and do light malware and web research without a hostile page ever running code
+on their host. bling opens one of those disposable sessions and drives it for you — from Python
+or the `bling` command line — instead of clicking through it by hand.
+
+That automation matters because hostile pages fight back. A malware page will bounce a visitor
+through a chain of redirects and **cloak** itself based on who's asking — serving the real
+payload only to the right country, operating system, or a residential (rather than datacenter)
+IP, and a harmless decoy to everyone else. bling lets you switch proxy exits (datacenter,
+residential, mobile, Tor) and swap the OS or browser between runs, so you can see what the page
+shows each kind of visitor.
+
+To capture what a page actually did, bling produces a **HAR file** (HTTP Archive) — a JSON log
+of every network request the page made: each redirect, script, and API call, with headers and
+timing. It's recorded by a real Firefox inside the VM, with no CDP or automation flags a page
+could detect, so the log is faithful and you analyse it offline.
+
+> **Scope:** HAR capture and the VM shell / file-transfer features run in a **Firefox-on-Windows**
+> VM — bling drives Firefox's own built-in network monitor, and the shell uses Windows
+> conventions (Win+R, the `Downloads` folder). You can still *open* a page in other browsers or
+> OSes to compare what renders — see the [browser/OS cloaking example](examples/env_cloaking.py) —
+> but the network capture itself is Firefox-on-Windows.
+
+Built to be obvious for humans and for AI agents. See [`CODING_STANDARD.md`](CODING_STANDARD.md).
 
 ## Install
 
@@ -13,12 +37,20 @@ playwright install chrome      # bling drives channel="chrome" — real Google C
 ```
 (Google Chrome must be installed; `playwright install chrome` provisions the Chrome channel.)
 
-Put your Browserling credentials in `keys.env` (or `.env`) up the tree:
+Copy the example env file and fill in your own Browserling account — not a shared one, since
+the login ties to a local Chrome profile and two people on one account collide with an
+"another host joined" error:
+
+```bash
+cp .env.example .env      # then edit .env
+```
 
 ```
 BROWSERLING_EMAIL=you@example.com
 BROWSERLING_PASSWORD=...
 ```
+
+(bling reads `.env` — or `keys.env` — from the project directory or any parent.)
 
 ## Log in once
 
@@ -95,10 +127,15 @@ records only its name. Full command reference in [`docs/SHELL.md`](docs/SHELL.md
 
 ## Docs & examples
 
-- **[`docs/API.md`](docs/API.md)** — the full public API on one page.
-- **[`examples/`](examples/README.md)** — runnable walkthroughs: [`quickstart.py`](examples/quickstart.py)
-  (the one-liner + a power-user session) and [`geo_cloaking.py`](examples/geo_cloaking.py)
-  (capture a URL across countries and diff the cloaking).
+- **[`docs/API.md`](docs/API.md)** — the full Python API on one page, plus the **`bling`
+  command-line reference** (`bling har`, `urls`, `open`, `run`, `shell`, `play`).
+- **[`docs/SHELL.md`](docs/SHELL.md)** — the interactive **`bling shell`** for driving a session
+  by hand, and recording a run to a replayable `.bling` script.
+- **[`examples/`](examples/README.md)** — seven runnable walkthroughs: the
+  [quickstart](examples/quickstart.py), HAR [URL triage](examples/url_triage.py),
+  [geo-](examples/geo_cloaking.py) and [browser/OS](examples/env_cloaking.py) cloaking,
+  [running a tool in the VM](examples/run_in_vm.py), and the click-through / login-capture
+  [recordings](examples/click_through.bling).
 - Docstrings are reference docs too: `help(bling.har)`, `help(bling.Session)`, `help(bling.HAR)`.
 
 ## Errors
@@ -109,12 +146,21 @@ to fix them (e.g. *"Not logged in — run: bling login"*).
 
 ## Security
 
-A HAR records **everything** a page did on the wire — request cookies, `Authorization` headers,
-session tokens, and any credentials submitted in a form — all in plaintext. Treat a HAR of a
-logged-in session as sensitive as the login itself: don't commit it, and scrub it before
-sharing. (For analysing hostile pages you never log in, so this rarely bites — but know it.)
-The capture runs in a disposable VM isolated from your machine, so the page's code never touches
-your host.
+**You never have to run a hostile page yourself.** It executed in the throwaway VM, isolated from
+your host; what comes back is the HAR — an inert JSON log of what the page requested. The whole
+workflow is to pull that log down and pick through it locally, so the page's code never runs on
+your machine.
+
+**But treat the URLs inside it as live and hostile.** The file doesn't execute on its own, yet
+it's a list of the exact malware URLs the page touched. Read it *as data* — a text or JSON editor,
+`bling urls`, or the [URL-triage example](examples/url_triage.py) — and **don't open a captured HAR
+in a web browser, or any viewer that turns its links into clickable ones.** One click sends your
+own machine straight to the live payload, outside the sandbox that was protecting you.
+
+**And know it carries secrets, in plaintext** — request cookies, `Authorization` headers, session
+tokens, and anything submitted in a form. A HAR of your *own* logged-in session is as sensitive as
+the login itself: don't commit it, and scrub it before sharing. Triaging a hostile page you never
+log in, so this rarely bites — but know it's there.
 
 ## How it works
 
