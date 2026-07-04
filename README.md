@@ -32,10 +32,17 @@ Built to be obvious for humans and for AI agents. See [`CODING_STANDARD.md`](COD
 ## Install
 
 ```bash
+git clone https://github.com/BlingWeb/bling.git
+cd bling
 pip install -e .
 playwright install chrome      # bling drives channel="chrome" — real Google Chrome, not Chromium
 ```
 (Google Chrome must be installed; `playwright install chrome` provisions the Chrome channel.)
+
+bling uses **two browsers for two different jobs**. A real **Chrome on your own machine** is the
+driver — bling automates it with Playwright to operate Browserling and to hold your login. The
+suspect page itself loads in a real **Firefox inside the VM**, which is where the HAR is captured.
+That's why you install Chrome locally, yet every capture's `creator` is Firefox.
 
 Copy the example env file and fill in your own Browserling account — not a shared one, since
 the login ties to a local Chrome profile and two people on one account collide with an
@@ -166,7 +173,9 @@ log in, so this rarely bites — but know it's there.
 
 A Browserling session is two layers, and the API hides the seam:
 
-- **Outer page** (`browserling.com`) — real DOM, driven with Playwright (the control panel).
-- **Inner remote browser** — pixels in a canvas; synthetic keyboard/mouse forward into the
-  VM, so shell/keystroke ops run "blind" (Win+R, etc.). Files move via Browserling's curl
-  file-transfer (HTTP PUT in, GET out).
+- **Outer page** (`browserling.com`) — real DOM, driven with Playwright in a **local Chrome**
+  on your machine (the control panel that carries your login).
+- **Inner remote browser** — the browser running inside the VM, seen only as pixels in a canvas;
+  HAR capture always loads the page in the VM's **Firefox**. Synthetic keyboard/mouse forward
+  into the VM, so shell/keystroke ops run "blind" (Win+R, etc.). Files move via Browserling's
+  curl file-transfer (HTTP PUT in, GET out).
