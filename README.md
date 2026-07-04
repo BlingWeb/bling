@@ -31,22 +31,27 @@ Built to be obvious for humans and for AI agents. See [`CODING_STANDARD.md`](COD
 
 ## Install
 
+Python 3.10+.
+
 ```bash
 git clone https://github.com/BlingWeb/bling.git
 cd bling
 pip install -e .
 playwright install chrome      # bling drives channel="chrome" — real Google Chrome, not Chromium
 ```
-(Google Chrome must be installed; `playwright install chrome` provisions the Chrome channel.)
+(Google Chrome must be installed; `playwright install chrome` provisions the Chrome channel.
+If it warns that chrome is already installed, you're done. Ignore its suggestion to re-run
+with `--force`, which starts by uninstalling your system Chrome.)
 
 bling uses **two browsers for two different jobs**. A real **Chrome on your own machine** is the
 driver — bling automates it with Playwright to operate Browserling and to hold your login. The
 suspect page itself loads in a real **Firefox inside the VM**, which is where the HAR is captured.
 That's why you install Chrome locally, yet every capture's `creator` is Firefox.
 
-Copy the example env file and fill in your own Browserling account — not a shared one, since
-the login ties to a local Chrome profile and two people on one account collide with an
-"another host joined" error:
+If you want `bling login` to pre-fill the sign-in form, copy the example env file and add
+your Browserling account. This is optional; typing your credentials into the login window
+works the same. Use your own account, not a shared one — the login ties to a local Chrome
+profile, and two people on one account collide with an "another host joined" error.
 
 ```bash
 cp .env.example .env      # then edit .env
@@ -57,7 +62,7 @@ BROWSERLING_EMAIL=you@example.com
 BROWSERLING_PASSWORD=...
 ```
 
-(bling reads `.env` — or `keys.env` — from the project directory or any parent.)
+(bling reads `keys.env` or `.env`, searching from the current directory upward.)
 
 ## Log in once
 
@@ -74,7 +79,7 @@ bling login          # solve the CAPTCHA in the window that opens
 import bling
 
 har = bling.har("demo.browserling.com", out="demo.har")
-print(len(har), har.creator)        # 7 Firefox
+print(len(har), har.creator)        # e.g. 19 Firefox
 print(har.urls())
 ```
 

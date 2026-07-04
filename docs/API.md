@@ -117,7 +117,7 @@ bling login
 bling har <url> [--out PATH] [--os win10] [--live] [--proxy KIND] [--country NAME]
 bling urls <file.har> [--summary]
 bling open <url> [--os ...] [--browser ...] [--proxy KIND] [--country NAME] [--live] [-k/--keep-open]
-bling run "<command>" [--live]
+bling run "<command>" [--os win10] [--browser chrome138] [--live]
 bling shell [--record FILE] [--play FILE] [--headless]      # interactive REPL — see docs/SHELL.md
 bling play <file.bling> [--live]                            # replay a recording, unattended
 bling --version
@@ -127,6 +127,8 @@ bling --version
 #                 (or Ctrl-C the terminal). Implies --live, skips the closing
 #                 screenshot. Use for attended flows — e.g. signing into a
 #                 site inside the VM by hand. No TTY required.
+# Without -k, `bling open` finishes by saving a screenshot to _explore/session.png
+# (creating the folder if needed) and printing its path.
 ```
 
 `bling shell` and `bling play` have their own reference — the interactive verbs, the

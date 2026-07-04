@@ -74,7 +74,7 @@ def main(argv=None) -> int:
         "-k",
         "--keep-open",
         action="store_true",
-        help="leave the session open until you press Enter / Ctrl-C (implies --live)",
+        help="leave the session open until you close the browser window or Ctrl-C (implies --live)",
     )
     p.add_argument(
         "--proxy",

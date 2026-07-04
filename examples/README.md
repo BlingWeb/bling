@@ -11,7 +11,7 @@ hand-editable and safe to paste into a bug report.
 | Example | What it shows |
 |---|---|
 | **[quickstart.py](quickstart.py)** | The HAR one-liner, and a power-user `Session` (shell, file round-trip, screenshot). |
-| **[url_triage.py](url_triage.py)** | Triage a captured HAR — list the third-party / exfil domains a page contacted, busiest first. No session needed. `python examples/url_triage.py <file.har>` |
+| **[url_triage.py](url_triage.py)** | Triage a captured HAR — list the third-party / exfil domains a page contacted, busiest first. No session needed, just a HAR to read — a fresh clone has none, so capture one first with `bling har <url>`. `python examples/url_triage.py <file.har>` |
 | **[geo_cloaking.py](geo_cloaking.py)** | Capture a URL as served to different **countries** and diff the network requests. `python examples/geo_cloaking.py <url>` |
 | **[env_cloaking.py](env_cloaking.py)** | Screenshot a URL across **browsers and OSes** to catch a page that hides from modern browsers (User-Agent sniffing). `python examples/env_cloaking.py <url>` |
 | **[run_in_vm.py](run_in_vm.py)** | Push a suspect file into the disposable VM, fingerprint it with tools there, pull back only a report — nothing runs on your machine. |

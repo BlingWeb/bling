@@ -18,7 +18,7 @@ import bling
 def one_liner():
     """The 90% case: a URL in, a HAR out (real Firefox, no CDP)."""
     har = bling.har("demo.browserling.com", out="demo.har")
-    print(har)  # <HAR 'demo.browserling.com' 7 entries, creator Firefox>
+    print(har)  # e.g. <HAR 'demo.browserling.com' 19 entries, creator Firefox>
     print("creator:", har.creator)
     print("urls:", *har.urls(), sep="\n  ")
 
