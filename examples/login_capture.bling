@@ -1,0 +1,37 @@
+# bling recording -- login-gated capture
+#
+# To capture the traffic *behind* a login, you have to sign in inside the same instrumented
+# Firefox that's recording -- so this logs in within capture mode, then records the authenticated
+# pages. The login itself is captured too, which is often exactly what you want to inspect.
+#
+# Set the credentials in your environment first (bling also reads keys.env / .env up the tree):
+#   $env:APP_EMAIL='you@example.com'; $env:APP_PASSWORD='...'      # PowerShell
+# `type_env` types the VALUE of the variable into the VM but records only the NAME, so this
+# file stays shareable -- the password never lands on disk. See docs/SHELL.md "Secrets policy".
+#
+# Replay unattended:   bling play examples/login_capture.bling
+#
+# The field-by-field steps below are illustrative -- every login page is laid out differently.
+# Most focus the email box on load, so keyboard Tab/Enter is enough; if yours doesn't, take a
+# `screenshot` and add a `click <x> <y>` to focus the first field. Coordinates are page-specific.
+
+open app.example.com
+capture start
+
+# Load the login page in the recording Firefox.
+navigate https://app.example.com/login
+wait 3
+focus
+
+# Fill and submit -- keyboard only, so there are no brittle pixel coordinates to maintain.
+type_env APP_EMAIL
+key Tab
+type_env APP_PASSWORD
+key Enter
+wait 4
+
+# Now visit an authenticated page; its traffic is recorded like any other.
+navigate https://app.example.com/account
+wait 3
+
+capture save ./login-run

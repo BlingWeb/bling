@@ -1,0 +1,26 @@
+# bling recording -- click-through capture (a HAR per page)
+#
+# Some payloads only appear after you move past a splash or a fake "verify" gate, so a single
+# `bling har <url>` sees only the first page. Capture mode arms an instrumented Firefox that
+# writes a HAR on EVERY page load, so you can walk the funnel and keep the whole chain.
+#
+# Replay unattended:   bling play examples/click_through.bling
+# Or drive it by hand: bling shell   (then type these lines)
+#
+# `capture save` writes one HAR per page into ./clickthrough-run, named by order + host + the
+# proxy that was active, e.g. 00-<host>-noproxy.har, 01-<host>-noproxy.har. Then triage them:
+#   python examples/url_triage.py clickthrough-run/01-*.har
+
+open example.com
+capture start
+
+# Page 1 -- the landing page. In capture mode `navigate` drives the instrumented Firefox.
+navigate https://browser-security-lab.com/rc-cars-shop/
+wait 3
+
+# Page 2 -- click through to the next hop. Swap this URL for wherever the lure leads; to click
+# a link by pixel instead, take a `screenshot`, read the coordinates, and use `click <x> <y>`.
+navigate https://browser-security-lab.com/rc-cars-shop/checkout
+wait 3
+
+capture save ./clickthrough-run
