@@ -1,10 +1,10 @@
 # bling coding standard
 
-The bar: **`requests`**. Kenneth Reitz's rule — *"if you have to look at the docs every
-time you use the module, build a better module"* — and Armin Ronacher's praise of requests
+The bar: **`requests`**. Kenneth Reitz's rule, *"if you have to look at the docs every
+time you use the module, build a better module"*, and Armin Ronacher's praise of requests
 as *"how beautiful an API can be with the right level of abstraction."* We add one twist:
-bling is **built for AI use** as much as human use. Both audiences want the same thing —
-an obvious, predictable, self-describing API — so we optimize for it deliberately.
+bling is **built for AI use** as much as human use. Both audiences want the same thing,
+an obvious, predictable, self-describing API, so we optimize for it deliberately.
 
 This standard is short on purpose. If a rule needs a paragraph to justify, it's probably wrong.
 
@@ -13,7 +13,7 @@ This standard is short on purpose. If a rule needs a paragraph to justify, it's 
 - **One hero call for the 90% case.** `requests.get(url)` → `bling.har(url)`. A top-level
   function with sensible defaults that Just Works, delegating to a `Session` underneath.
 - **`Session` for power users**, always a context manager (`with bling.Session() as s:`) so
-  resources (and the remote VM) are always released — a leaked session = "too many sessions".
+  resources (and the remote VM) are always released; a leaked session = "too many sessions".
 - **Minimal required args, keyword-only options.** Required things are positional; everything
   else is a keyword with a sane default. No config needed to start.
 - **Right level of abstraction.** Hide the two-layer Browserling mess (DOM vs canvas) behind

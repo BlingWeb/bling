@@ -1,9 +1,9 @@
-# bling shell — interactive REPL with record + replay
+# bling shell: interactive REPL with record + replay
 
 **See also:** [README](../README.md) to get started · [`API.md`](API.md) for the Python
 `Session` API and the rest of the non-interactive `bling` CLI (`har`, `urls`, `open`, `run`, `play`).
 
-`bling shell` is an interactive prompt for driving one Browserling session by hand — like
+`bling shell` is an interactive prompt for driving one Browserling session by hand, like
 `ipython` for bling. You type verbs one at a time (`open`, `proxy`, `navigate`, `type`,
 `key`, `screenshot`), watch each one hit a live VM, and optionally **record** the whole run
 to a plain-text `.bling` file. `bling play` replays that file unattended.
@@ -25,12 +25,12 @@ Each verb wraps one `Session` method; defaults match the Session defaults.
 |---|---|
 | `login` | Solve the one-time CAPTCHA login (needed before `open` if the cookie has expired). Opens a headed window; must run before any session is open. |
 | `open <url> [--os win10] [--browser chrome138]` | Open a session and wait until the canvas is ready. Creates the browser (and checks login) on first use. |
-| `navigate <url> [--via panel\|remote]` | Load a new URL — via the control panel (default) or the remote browser's own address bar. |
+| `navigate <url> [--via panel\|remote]` | Load a new URL via the control panel (default) or the remote browser's own address bar. |
 | `proxy <kind> [country]` | Route through a proxy/VPN (`datacenter`/`residential`/`mobile`/`tor`), then wait ready. |
 | `resolution <WxH>` | Set the remote screen resolution, e.g. `resolution 1920x1080`. |
 | `focus` | Give the VM keyboard focus so OS shortcuts (Win+R) forward into it. |
 | `key <combo>` | Press a key/chord, e.g. `key Tab`, `key Control+A`. |
-| `type <text>` | Type literal text into the VM. **Recorded in plaintext — never use for secrets.** |
+| `type <text>` | Type literal text into the VM. **Recorded in plaintext; never use for secrets.** |
 | `type_env <ENVVAR>` | Type the *value* of an env var; records only the variable name (see Secrets). |
 | `click <x> <y>` | Click a pixel in the remote view. |
 | `run <command>` | Run a shell command in the VM and print its output. |
@@ -39,13 +39,13 @@ Each verb wraps one `Session` method; defaults match the Session defaults.
 | `screenshot [path]` | Save a PNG of the session (default `shot.png`). |
 | `har <url> [out.har]` | Capture the URL's HAR with a fresh Firefox in this session (replaces the current view). Saves `<host>.har` and shows a summary. |
 | `urls <file.har>` | Print every URL a `.har` file requested, one per line (local read, no VM). |
-| `capture start` / `capture save <dir>` | Record a HAR for **every** page you visit, across proxy switches — for malware you must click through to reach. `start` arms it; drive with `navigate`/`click`; `save` downloads them all, tagged by order, host, and active proxy. |
-| `wait <seconds>` | Sleep — an explicit pause you can put in a recording for playback. |
+| `capture start` / `capture save <dir>` | Record a HAR for **every** page you visit, across proxy switches, for malware you must click through to reach. `start` arms it; drive with `navigate`/`click`; `save` downloads them all, tagged by order, host, and active proxy. |
+| `wait <seconds>` | Sleep, an explicit pause you can put in a recording for playback. |
 | `end` | End the Browserling VM. The shell stays open; `open <url>` starts a fresh one. |
 | `record on <file>` / `record off` | Toggle recording mid-session. |
 | `play <file>` | Replay a `.bling` file (works from inside the shell too). |
 | `help [cmd]` | Built-in help (reads each verb's docstring). |
-| `quit` / `exit` | Close the session and exit. Ctrl-C returns to the prompt; an EOF key exits too — Ctrl-Z then Enter on Windows, Ctrl-D on Unix. |
+| `quit` / `exit` | Close the session and exit. Ctrl-C returns to the prompt; an EOF key exits too (Ctrl-Z then Enter on Windows, Ctrl-D on Unix). |
 
 ## Worked example: record a login
 
@@ -54,7 +54,7 @@ tree, or you can `setx` them). Then record:
 
 ```
 $ bling shell --record login.bling
-bling 0.1.0 — interactive Browserling driver
+bling 0.1.0 - interactive Browserling driver
 type `help` to list commands, `help <cmd>` for usage, `quit` to exit
 (recording -> login.bling)
 
@@ -109,15 +109,15 @@ bling play login.bling
 ## Driving the remote page: clicking and navigation
 
 bling controls two layers, and only one is scriptable by name. Browserling's own controls
-*around* the remote screen — the address box, the menu buttons — are real web elements, so
+*around* the remote screen (the address box, the menu buttons) are real web elements, so
 `open`, `navigate`, `proxy`, `resolution`, and `end` target them precisely. The page *inside*
 the remote browser is different: bling sees it only as streamed video, so there is no way to
 "click the Sign-in link" by name. You drive it the way you would over a screen-share:
 
-- **To load a URL**, use `navigate <url>` — it reloads inside the current VM, keeping its proxy.
+- **To load a URL**, use `navigate <url>`; it reloads inside the current VM, keeping its proxy.
   `open` also loads a URL, but it starts a *fresh* VM and drops any proxy you had set.
 - **To click something on the page**, take a `screenshot`, open the PNG, read off the pixel
-  position, and `click <x> <y>`. There is no element inspector — it is a picture.
+  position, and `click <x> <y>`. There is no element inspector; it is a picture.
 - **Prefer the keyboard**, which needs no coordinates: `focus` to hand the VM keyboard focus,
   then `key Tab` between fields, `type` / `type_env` to fill them, `key Enter` to submit, and
   `key Control+l` to jump to the remote address bar.
@@ -127,17 +127,17 @@ Pixel `click` coordinates are brittle across screen sizes, so set a known one wi
 
 ## Comparing a page across countries (cloaking)
 
-Malware and phishing pages often serve different content by visitor country — harmless in one
+Malware and phishing pages often serve different content by visitor country: harmless in one
 region, hostile in another. To catch that, capture the same page through different proxy exits
 and diff the results. The reliable, one-clean-session-per-country way is from the command line:
 
 ```bash
 bling har suspicious.example --proxy datacenter --country germany --out de.har
 bling har suspicious.example --proxy datacenter --country "united states" --out us.har
-bling urls de.har        # vs.  bling urls us.har  — requests that differ are the cloaked behavior
+bling urls de.har        # vs.  bling urls us.har  ; requests that differ are the cloaked behavior
 ```
 
-Interactively, do it in one session — set a proxy, capture, switch, capture again. `har`
+Interactively, do it in one session: set a proxy, capture, switch, capture again. `har`
 records through whatever proxy is active, and `navigate` (not `open`) keeps that proxy on a reload:
 
 ```
@@ -149,35 +149,35 @@ har suspicious.example us.har    # ...and to the US
 ```
 
 Two real-world notes: many datacenter IPs are outright blocked by anti-abuse services (the page
-hangs or challenges instead of loading — itself a signal), so `residential` or `mobile` exits
+hangs or challenges instead of loading, itself a signal), so `residential` or `mobile` exits
 often see what a real victim sees; and HAR capture is always via Firefox, so browser-based
 cloaking is a separate axis you test by changing `open`'s `--browser`.
 
 ## Capturing a click-through (a HAR per page)
 
 Some payloads only appear after you click through a few pages, and `har <url>` captures just
-one. `capture` records a HAR for *every* page instead. Arm it, then drive through the site —
+one. `capture` records a HAR for *every* page instead. Arm it, then drive through the site;
 each page you load writes its own HAR, and it keeps recording across proxy switches:
 
 ```
 open example.com                 # any starting session; capture arms its own Firefox
 capture start
 navigate http://gate.example     # page 1 recorded
-click 512 340                    # click through — the page it lands on is recorded too
+click 512 340                    # click through; the page it lands on is recorded too
 proxy residential germany        # switch exit mid-way; later pages are tagged Germany
 navigate http://gate.example/2   # page 3, as served to Germany
 capture save ./run1
 ```
 
 `capture save` downloads them all into `./run1`, named by order, host, and the proxy that was
-active — e.g. `00-gate.example-noproxy.har`, `02-gate.example-residential-germany.har`. In
+active, e.g. `00-gate.example-noproxy.har`, `02-gate.example-residential-germany.har`. In
 capture mode you're driving the recording Firefox, so `navigate` moves *it* (by keyboard), and
 `click`/`key`/`type` act on it as usual; read pixel positions off a `screenshot`.
 
 ## Recording format
 
-Plain text, one command per line, `#` starts a comment — hand-editable, diffable, and safe
-to paste into a bug report. Playback skips blank lines and comments and runs every other line
+Plain text, one command per line, `#` starts a comment. The files are hand-editable,
+diffable, and safe to paste into a bug report. Playback skips blank lines and comments and runs every other line
 through the same dispatch path the REPL uses, so what you record is exactly what replays.
 Extension: `.bling`.
 
@@ -189,18 +189,18 @@ The recording is meant to be shareable, so **plaintext passwords must never land
 - `type_env <ENVVAR>` types the *value* of the environment variable into the VM but writes
   only `type_env ENVVAR` to the recording, plus a `# (secret typed from env: …)` marker. The
   replay reads the same variable at playback time, so the file is portable between machines
-  that share the variable — and the secret itself is never on disk.
+  that share the variable, and the secret itself is never on disk.
 - If the variable is unset, `type_env` fails loudly rather than silently typing nothing into a
   password field.
 
 ## Lifecycle notes
 
-- The session is created lazily on the first `open`, and login is checked then — if the cookie
+- The session is created lazily on the first `open`, and login is checked then; if the cookie
   has expired you'll get `Not logged in — run once: bling login` before anything else happens.
 - `end` ends the remote VM but leaves the shell (and browser) up, so `open <url>` starts a
   fresh session without restarting the shell.
 - Quitting the shell (or Ctrl-D) always closes the session. So does simply abandoning the
-  process — the underlying `Session` registers an `atexit` guard so a forgotten shell can't
+  process; the underlying `Session` registers an `atexit` guard so a forgotten shell can't
   strand a live VM ("too many sessions").
 
 ## Errors
@@ -212,6 +212,6 @@ long or contains double-quotes (Win+R can't route it) instead of failing silentl
 
 ## Playback vs. the prompt
 
-`bling shell` needs a real terminal (it reads from stdin). `bling play <file>` does not — it
+`bling shell` needs a real terminal (it reads from stdin). `bling play <file>` does not; it
 takes no input, so it runs in any context, including a pipe, cron job, or background process.
 Keep those two paths distinct when scripting.

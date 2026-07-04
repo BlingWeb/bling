@@ -1,6 +1,6 @@
 # bling API reference
 
-One page. Everything public. (Docstrings carry the same info — `help(bling.har)` etc.)
+One page. Everything public. (Docstrings carry the same info: `help(bling.har)` etc.)
 
 **See also:** [README](../README.md) for install and the quickstart · [`SHELL.md`](SHELL.md)
 for the interactive `bling shell` and record/replay.
@@ -23,11 +23,11 @@ h = bling.har("demo.browserling.com", live=True, timeout=60)   # visible, longer
 ```
 
 ### `bling.capture(session, url, *, os="win10", timeout=45) -> HAR`
-Same capture, against a `Session` (opens a fresh session internally — don't `open()` first).
+Same capture, against a `Session` (opens a fresh session internally, so don't `open()` first).
 
 ### `bling.capture_here(session, url, *, timeout=45) -> HAR`
 Capture on an **already-open** session, keeping its proxy/state (the session's browser can be
-anything — capture launches its own Firefox in the VM). This is the one to use for cloaking
+anything; capture launches its own Firefox in the VM). This is the one to use for cloaking
 analysis: `open` → `set_proxy(country=...)` → `capture_here(url)`, then switch country and repeat.
 
 ### `bling.arm_capture(session) -> None` · `bling.sweep_captures(session) -> list[HAR]`
@@ -37,9 +37,9 @@ then `sweep_captures` downloads them all, oldest page first. `capture_count(sess
 how many have been written so far (used to tag pages by the proxy that was active).
 
 ### `bling.login(profile=None, *, wait=240) -> None`
-One-time human login — opens headed Chrome; **you** solve the reCAPTCHA. The cookie persists.
+One-time human login: opens headed Chrome; **you** solve the reCAPTCHA. The cookie persists.
 
-### `bling.__version__` — str
+### `bling.__version__` (str)
 
 ## `bling.Session`
 One session, one remote VM. Manage its lifetime either way:
@@ -47,7 +47,7 @@ One session, one remote VM. Manage its lifetime either way:
 ```python
 Session(profile=None, *, headless=True)   # headless by default; headless=False to watch
 
-with bling.Session() as s:      # context manager — releases the VM on exit (preferred)
+with bling.Session() as s:      # context manager; releases the VM on exit (preferred)
     ...
 
 s = bling.Session().start()     # or drive it step by step (e.g. from a REPL / the shell)
@@ -83,7 +83,7 @@ s.close()                       # release the VM; an atexit guard also frees it 
 | `screenshot(path) -> Path` | Save a PNG of the session |
 | `dismiss()` | Close any control-panel dialog and return focus to the VM |
 
-**`run()` vs `run_script()`:** `run()` redirects output to a log to read it back — but a process
+**`run()` vs `run_script()`:** `run()` redirects output to a log to read it back, but a process
 the command `start`s would inherit/lock that handle, so use `run_script()` (sentinel-based) for
 anything that spawns an app or runs long.
 
@@ -118,18 +118,18 @@ bling har <url> [--out PATH] [--os win10] [--live] [--proxy KIND] [--country NAM
 bling urls <file.har> [--summary]
 bling open <url> [--os ...] [--browser ...] [--proxy KIND] [--country NAME] [--live] [-k/--keep-open]
 bling run "<command>" [--os win10] [--browser chrome138] [--live]
-bling shell [--record FILE] [--play FILE] [--headless]      # interactive REPL — see docs/SHELL.md
+bling shell [--record FILE] [--play FILE] [--headless]      # interactive REPL; see docs/SHELL.md
 bling play <file.bling> [--live]                            # replay a recording, unattended
 bling --version
 
 # --live          shows the browser window (default: headless)
 # -k/--keep-open  leaves the session up until you close the browser window
 #                 (or Ctrl-C the terminal). Implies --live, skips the closing
-#                 screenshot. Use for attended flows — e.g. signing into a
+#                 screenshot. Use for attended flows, e.g. signing into a
 #                 site inside the VM by hand. No TTY required.
 # Without -k, `bling open` finishes by saving a screenshot to _explore/session.png
 # (creating the folder if needed) and printing its path.
 ```
 
-`bling shell` and `bling play` have their own reference — the interactive verbs, the
+`bling shell` and `bling play` have their own reference: the interactive verbs, the
 `.bling` recording format, and the secrets policy are all in [`SHELL.md`](SHELL.md).
