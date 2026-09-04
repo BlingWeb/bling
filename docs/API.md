@@ -83,6 +83,11 @@ s.close()                       # release the VM; an atexit guard also frees it 
 | `screenshot(path) -> Path` | Save a PNG of the session |
 | `dismiss()` | Close any control-panel dialog and return focus to the VM |
 
+Call `dismiss()` after `set_resolution()` as well as after file transfers. Setting the
+resolution leaves the Display Settings dialog open over the remote view, and Escape does
+not close it, so a screenshot taken straight afterwards has a Browserling dialog sitting
+across the middle of whatever you were photographing.
+
 **`run()` vs `run_script()`:** `run()` redirects output to a log to read it back, but a process
 the command `start`s would inherit/lock that handle, so use `run_script()` (sentinel-based) for
 anything that spawns an app or runs long.

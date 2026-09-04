@@ -501,6 +501,21 @@ class Session:
         if win.count() and win.first.is_visible():
             self.page.locator(".button-item.file-transfer").first.click()
             self.page.wait_for_timeout(400)
+        # Every other control-panel dialog is an .interactive-window carrying its own
+        # close control. Display Settings is one, and it used to stay open over the page
+        # after set_resolution, which put a Browserling dialog into screenshots meant to
+        # show the site. Escape alone does not close it.
+        for i in range(self.page.locator(".interactive-window").count()):
+            panel = self.page.locator(".interactive-window").nth(i)
+            try:
+                if not panel.is_visible():
+                    continue
+                shut = panel.locator(".close").first
+                if shut.count() and shut.is_visible():
+                    shut.click(timeout=1500)
+                    self.page.wait_for_timeout(200)
+            except Exception:  # noqa: BLE001 - a dialog that will not close is not fatal
+                pass
         self._close_popups()
         self.focus_vm()
         self.focus_vm()
