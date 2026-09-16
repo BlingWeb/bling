@@ -555,6 +555,25 @@ class Session:
         self.page.wait_for_timeout(400)
 
     def _close_popups(self) -> None:
+        # Browserling's own announcements ("Co-browsing is here!", 2026-09-16) sit in
+        # #group-popups over the control panel and intercept every click on it, so End
+        # session and the go button both time out until one is closed. Each carries a
+        # "Don't show again" box and a Close button; tick the box so the next session
+        # on this profile does not see it, then close it. Done in the page rather than
+        # with locators because the overlay is exactly what stops a locator click.
+        try:
+            self.page.evaluate(r"""() => {
+              document.querySelectorAll('#group-popups .popup[data-is-visible="true"]').forEach(p => {
+                const dont = p.querySelector('input[type=checkbox]');
+                if (dont && !dont.checked) dont.click();
+                const btn = [...p.querySelectorAll('button, .btn-close')]
+                  .find(b => /close/i.test(b.textContent || '') || /close/i.test(b.className));
+                if (btn) btn.click();
+              });
+            }""")
+            self.page.wait_for_timeout(200)
+        except Exception:
+            pass
         try:
             btn = self.page.locator(".fm-curl-popup").get_by_role("button", name="Close")
             if btn.count() and btn.first.is_visible():

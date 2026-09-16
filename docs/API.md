@@ -88,6 +88,12 @@ resolution leaves the Display Settings dialog open over the remote view, and Esc
 not close it, so a screenshot taken straight afterwards has a Browserling dialog sitting
 across the middle of whatever you were photographing.
 
+Call it once after `open()` too. Browserling shows its own announcements ("Co-browsing
+is here!", seen 2026-09-16) in a popup over the control panel, and while one is up every
+click on the panel is intercepted: `end()` and `navigate()` both time out with
+`menu item ... not clickable`. `dismiss()` and `end()` now tick the popup's "Don't show
+again" box and close it, so a profile sees each announcement once.
+
 **`run()` vs `run_script()`:** `run()` redirects output to a log to read it back, but a process
 the command `start`s would inherit/lock that handle, so use `run_script()` (sentinel-based) for
 anything that spawns an app or runs long.
