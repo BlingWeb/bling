@@ -29,7 +29,8 @@ from .errors import BlingError, EgressError, NotLoggedIn, NotReady, SessionBlock
 if TYPE_CHECKING:
     from playwright.sync_api import BrowserContext, Page, Playwright
 
-_TOKEN_RE = re.compile(r"https://(s\d+\.browserling\.com)/([A-Za-z0-9]+)/")
+# Transfer hosts are a letter prefix plus a number: s8, s13, and b8 (seen 2026-09-17).
+_TOKEN_RE = re.compile(r"https://([a-z]+\d+\.browserling\.com)/([A-Za-z0-9]+)/")
 
 
 def _parse_curl_token(text: str) -> tuple[str, str] | None:

@@ -32,6 +32,12 @@ from bling.session import _parse_curl_token
             "  curl -O https://s140.browserling.com/DEADbeef00/x.har ",
             ("s140.browserling.com", "DEADbeef00"),
         ),
+        # Seen live 2026-09-17: transfer servers are not always sNN.
+        (
+            "curl https://b8.browserling.com/2abc9xyz01/ -T file.txt",
+            ("b8.browserling.com", "2abc9xyz01"),
+        ),
+        ("curl -O https://www.browserling.com/abc123/file.txt", None),
         ("no url here", None),
         ("", None),
         (None, None),
