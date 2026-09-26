@@ -139,3 +139,80 @@ def test_cli_urls_prints_one_per_line(sample_har, tmp_path, capsys):
 )
 def test_host(url, host):
     assert _host(url) == host
+
+
+# --- run_script on a reused VM (seen 2026-09-25: a stale sentinel returned at once) ---
+class _FakePage:
+    def __init__(self, log):
+        self.log = log
+        self.keyboard = self
+        self.mouse = self
+
+    def press(self, key):
+        self.log.append(("press", key))
+
+    def type(self, text, delay=0):
+        self.log.append(("type", text))
+
+    def click(self, *a, **k):
+        pass
+
+    def wait_for_timeout(self, ms):
+        pass
+
+
+class _Resp:
+    def __init__(self, status, content=b""):
+        self.status_code, self.content = status, content
+
+
+def _scripted_session(monkeypatch, exists_before, poll_status=200):
+    import bling.session as bs
+    from bling.session import Session
+
+    log = []
+    s = Session()
+    s.page = _FakePage(log)
+    s._dl_token = ("s8.browserling.com", "tok")
+    checks = iter(exists_before)
+    monkeypatch.setattr(s, "_vm_file_exists", lambda name: next(checks))
+    monkeypatch.setattr(s, "run", lambda cmd, **k: log.append(("run", cmd)) or "")
+    monkeypatch.setattr(bs.requests, "get", lambda *a, **k: _Resp(poll_status, b"OK"))
+    return s, log
+
+
+def test_run_script_deletes_a_stale_sentinel_before_launch(monkeypatch):
+    s, log = _scripted_session(monkeypatch, exists_before=[True, False])
+    s.run_script("launch.bat", sentinel="done.flag", timeout=5, poll=0)
+    runs = [i for i, e in enumerate(log) if e[0] == "run"]
+    launch = next(i for i, e in enumerate(log) if e[0] == "type" and "launch.bat" in e[1])
+    assert runs and runs[0] < launch  # deleted first, then launched
+    assert "done.flag" in log[runs[0]][1]
+
+
+def test_run_script_skips_the_delete_when_there_is_no_sentinel(monkeypatch):
+    s, log = _scripted_session(monkeypatch, exists_before=[False])
+    s.run_script("launch.bat", sentinel="done.flag", timeout=5, poll=0)
+    assert not [e for e in log if e[0] == "run"]
+
+
+def test_run_script_refuses_a_sentinel_that_will_not_delete(monkeypatch):
+    s, log = _scripted_session(monkeypatch, exists_before=[True, True])
+    with pytest.raises(BlingError, match="could not delete done.flag"):
+        s.run_script("launch.bat", sentinel="done.flag", timeout=5, poll=0)
+    assert not [e for e in log if e[0] == "type"]  # never launched
+
+
+@pytest.mark.parametrize("bad", ["", r"..\x", "a b", "x&del", 'q"', "dir/f", "*.har"])
+def test_vm_names_must_be_plain(bad):
+    from bling.session import _check_vm_name
+
+    with pytest.raises(BlingError, match="plain filename"):
+        _check_vm_name(bad)
+
+
+def test_remove_rejects_paths_before_touching_the_vm(monkeypatch):
+    s, log = _scripted_session(monkeypatch, exists_before=[])
+    with pytest.raises(BlingError):
+        s.remove("ok.txt", r"..\evil")
+    assert log == []

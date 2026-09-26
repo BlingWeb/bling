@@ -67,7 +67,7 @@ s.close()                       # release the VM; an atexit guard also frees it 
 | **control panel (DOM)** | |
 | `navigate(url, *, via="panel")` | Load a URL (`via="remote"` keeps the remote DevTools open) |
 | `set_resolution("1920x1080")` | Set the remote screen resolution |
-| `set_proxy(kind="datacenter", *, country=None, address=None, username=None, password=None, protocol="SOCKS5")` | Route via proxy/VPN (`datacenter`/`residential`/`mobile`/`tor`/`custom`) |
+| `set_proxy(kind="datacenter", *, country=None, address=None, username=None, password=None, protocol="SOCKS5")` | Route via proxy/VPN (`datacenter`/`residential`/`mobile`/`tor`/`custom`); returns once the new exit shows and holds, see below |
 | **files (curl egress)** | |
 | `upload(local_path, remote_name=None) -> str` | Push a file into the VM's Downloads |
 | `upload_text(text, remote_name) -> str` | Write a small text file into the VM |
@@ -75,7 +75,8 @@ s.close()                       # release the VM; an atexit guard also frees it 
 | `download_when_ready(remote_name, out, *, timeout=45) -> Path` | Download once the file exists and its size settles (for async writes like a HAR) |
 | **VM control (blind)** | |
 | `run(command, *, timeout=60) -> str` | Run a shell command; returns combined stdout+stderr |
-| `run_script(remote_name, *, sentinel, timeout=90)` | Launch an uploaded script that spawns/long-runs; waits for its sentinel file |
+| `run_script(remote_name, *, sentinel, timeout=90)` | Launch an uploaded script that spawns/long-runs; waits for its sentinel file, deleting a stale one first |
+| `remove(*remote_names)` | Delete files from the VM's Downloads and confirm they are gone |
 | `focus_vm()` | Give the VM keyboard focus (so Win+R etc. forward) |
 | `key("Control+Shift+E")` | Press a key/chord in the focused VM window |
 | `type("text")` | Type into the focused VM window |
@@ -97,6 +98,56 @@ again" box and close it, so a profile sees each announcement once.
 **`run()` vs `run_script()`:** `run()` redirects output to a log to read it back, but a process
 the command `start`s would inherit/lock that handle, so use `run_script()` (sentinel-based) for
 anything that spawns an app or runs long.
+
+**A VM can come back with an earlier session's files.** Browserling sometimes hands out the
+same VM again, Downloads and all (seen 2026-09-25 across five parallel sessions). A sentinel
+left there made `run_script()` return at once, before the new run had done anything, and a
+`download()` then fetched the old output. `run_script()` now deletes its sentinel before
+launching, and raises `BlingError` if the file will not go. The script's other outputs are
+yours to clear: call `s.remove("result.txt")` first, or give each run's files a unique name.
+File names passed to `run_script()` and `remove()` must be plain names (letters, digits, `.`,
+`_`, `-`), because they are typed into a VM command line.
+
+**How `set_proxy()` behaves** (the proxy panel as inspected on 2026-09-25):
+
+- With a proxy connected, the panel reopens on that kind's screen and hides the others. To
+  change kind, `set_proxy()` presses Disconnect first; before this fix, it waited 30 seconds
+  on the new kind's hidden country list instead.
+- "Set Location" and Tor's "New Identity" change the exit about three seconds after the
+  click, with no sign in the buttons. `set_proxy()` waits for the status line to show the
+  new exit, then checks it has held for a second. Before, it returned at once, and a
+  Disconnect sent in that window was undone when the new exit landed.
+- Browserling can refuse a change with a "Couldn't set proxy" popup, as it did for a
+  residential exit in India on 2026-09-25. `set_proxy()` closes the popup, retries once,
+  then raises `BlingError` quoting Browserling's message and naming the exit the session
+  kept. Left open, that popup blocked every later click, so each one timed out.
+- Each kind offers its own countries. Residential has no Canada; datacenter, mobile and Tor
+  do. A country the kind lacks raises `BlingError` listing what that kind offers and which
+  kinds have the country, and it is checked before anything is disconnected.
+- Any other stall raises `BlingError` naming the step, the panel's state, and Playwright's
+  call log.
+
+## Inside the VM: the network exit
+
+**Command-line tools inside the VM do not use the chosen exit by default.** The proxy you
+set applies to the VM's browsers through the Windows proxy setting, so `curl`, `node` and
+the rest go out directly unless you point them at it. That setting is `ProxyServer` under
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`, and it reads
+`192.168.100.1:600N`, and the port is not fixed: Tor was `6004` in one session and `6002`
+in another on 2026-09-25. So read it at run time in an uploaded `.bat` (`run()` refuses
+double quotes). This was checked live on a Tor exit on 2026-09-25: through `%PX%`, curl
+came out at the Tor address the panel showed, and without it, at the VM's own datacenter
+address.
+
+```bat
+for /f "tokens=3" %%a in ('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings" /v ProxyServer') do set PX=%%a
+curl -s -x http://%PX% https://api.ipify.org > %USERPROFILE%\Downloads\exit_ip.txt
+```
+
+Node 24 is installed in the VM (`node --version` gave `v24.0.1` on 2026-09-25). Chrome there
+listens on remote-debugging port 20000, so a Node script inside the VM can drive it over the
+Chrome DevTools Protocol. The HAR capture deliberately avoids that route, because pages can
+detect an automated browser, so use it only where that does not matter.
 
 ## `bling.HAR`
 Thin, introspectable wrapper over the HAR dict.
