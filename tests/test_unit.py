@@ -216,3 +216,59 @@ def test_remove_rejects_paths_before_touching_the_vm(monkeypatch):
     with pytest.raises(BlingError):
         s.remove("ok.txt", r"..\evil")
     assert log == []
+
+
+# --- Mac VMs: commands go through Terminal, not Win+R (added 2026-09-30) ---
+def _mac_session(monkeypatch, exists_before=(False,)):
+    s, log = _scripted_session(monkeypatch, exists_before=list(exists_before))
+    s.os = "mac"
+    monkeypatch.setattr(s, "launch_app", lambda name: log.append(("app", name)))
+    return s, log
+
+
+def test_mac_run_types_into_terminal_and_allows_quotes(monkeypatch):
+    import bling.session as bs
+    from bling.session import Session
+
+    log = []
+    s = Session()
+    s.page = _FakePage(log)
+    s.os = "mac"
+    s._dl_token = ("b8.browserling.com", "tok")
+    monkeypatch.setattr(s, "launch_app", lambda name: log.append(("app", name)))
+
+    def egress(url, **k):  # serve what the typed command would have written
+        line = next(e[1] for e in log if e[0] == "type")
+        marker = line.rsplit("echo ", 1)[1].split(" ")[0]
+        return _Resp200Text(f"hi\n{marker}\n")
+
+    monkeypatch.setattr(bs.requests, "get", egress)
+    assert s.run('echo "hi"', timeout=5, poll=0) == "hi"
+    line = next(e[1] for e in log if e[0] == "type")
+    assert line.startswith('(echo "hi") > ~/Downloads/_blrun_')
+    assert ("app", "Terminal") in log and ("press", "Meta+r") not in log
+
+
+class _Resp200Text:
+    def __init__(self, text):
+        self.status_code, self.text = 200, text
+
+
+def test_mac_run_script_starts_in_background_with_the_right_runner(monkeypatch):
+    s, log = _mac_session(monkeypatch)
+    s.run_script("job.py", sentinel="done.flag", timeout=5, poll=0)
+    line = next(e[1] for e in log if e[0] == "type")
+    assert line == "nohup python3 ~/Downloads/job.py > /dev/null 2>&1 &"
+
+
+def test_mac_remove_uses_rm(monkeypatch):
+    s, log = _mac_session(monkeypatch, exists_before=[False, False])
+    s.remove("a.txt", "b.txt")
+    assert ("run", "rm -f ~/Downloads/a.txt ~/Downloads/b.txt") in log
+
+
+def test_launch_app_refuses_a_windows_session():
+    from bling.session import Session
+
+    with pytest.raises(BlingError, match="Mac VMs"):
+        Session().launch_app("Terminal")

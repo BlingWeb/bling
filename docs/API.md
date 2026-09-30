@@ -78,6 +78,7 @@ s.close()                       # release the VM; an atexit guard also frees it 
 | `run_script(remote_name, *, sentinel, timeout=90)` | Launch an uploaded script that spawns/long-runs; waits for its sentinel file, deleting a stale one first |
 | `remove(*remote_names)` | Delete files from the VM's Downloads and confirm they are gone |
 | `focus_vm()` | Give the VM keyboard focus (so Win+R etc. forward) |
+| `launch_app(name)` | Mac VMs only: open or bring forward `"Terminal"`, `"Finder"` or `"Xcode"` from the Launch apps menu |
 | `key("Control+Shift+E")` | Press a key/chord in the focused VM window |
 | `type("text")` | Type into the focused VM window |
 | `canvas_click(x, y)` | Click a pixel in the remote view |
@@ -107,6 +108,17 @@ launching, and raises `BlingError` if the file will not go. The script's other o
 yours to clear: call `s.remove("result.txt")` first, or give each run's files a unique name.
 File names passed to `run_script()` and `remove()` must be plain names (letters, digits, `.`,
 `_`, `-`), because they are typed into a VM command line.
+
+**Mac VMs** (`open(..., os="mac", browser="safari")`, macOS 15.2, verified 2026-09-30).
+`run()`, `run_script()` and `remove()` work the same way from the caller's side, but the
+route in is different. Cmd+Space never reaches Spotlight, so there is no Win+R to use.
+Instead the driver opens Terminal from the control panel's Launch apps menu and types the
+command there as a zsh line, so double quotes are allowed and there is no length cap.
+`run_script()` runs a `.py` with `python3` and anything else with `zsh`, in the background,
+so Terminal is free for the next `run()`. The VM user is `user`, files land in
+`~/Downloads`, and `python3` and `curl` are installed but Node is not. The first keystroke
+after focusing Terminal is dropped, so the driver spends it on a space. Uploading a file
+opens a Finder window on top; `run()` brings Terminal back in front before it types.
 
 **How `set_proxy()` behaves** (the proxy panel as inspected on 2026-09-25):
 

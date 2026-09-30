@@ -3,7 +3,8 @@
 A session has two layers, and the API hides the seam:
   * OUTER page (browserling.com) — real DOM, driven with Playwright (the control panel).
   * INNER remote browser — pixels in a canvas; synthetic keyboard/mouse forward into the VM,
-    so we drive it "blind" (Win+R, keystrokes). The VM is a full Windows box with admin.
+    so we drive it "blind" (Win+R, keystrokes). The VM is a full Windows box with admin,
+    or a macOS box driven through Terminal when opened with os="mac".
 
 Auth is a one-time human step (reCAPTCHA, never auto-solved): run ``bling login`` once; the
 cookie persists in the profile so later runs are unattended until it expires.
@@ -202,8 +203,14 @@ class Session:
         self.headless = headless
         self._dl_token: tuple[str, str] | None = None
         self._ul_token: tuple[str, str] | None = None
+        self.os = "win10"  # set by open(); run() and friends pick Win+R or Terminal by it
         self._pw = None
         self._ctx = None
+
+    @property
+    def is_mac(self) -> bool:
+        """True when the open session is a macOS VM (commands go through Terminal)."""
+        return self.os in config.MAC_OS_SLUGS
 
     # --- lifecycle ----------------------------------------------------------
     def start(self) -> Session:
@@ -278,6 +285,7 @@ class Session:
         'ready'
         """
         self._dl_token = self._ul_token = None  # new session -> new tokens
+        self.os = os
         url = config.BROWSE.format(os=os, browser=browser, target=target)
         self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
         self._dismiss_promo()
@@ -595,30 +603,31 @@ class Session:
         """Run a shell command in the VM and return its combined stdout+stderr.
 
         The console is blind pixels, so output is redirected to a log + DONE marker and
-        polled out via the curl egress. Keep ``command`` short (Win+R caps ~255 chars, no
-        embedded double-quotes); for more, upload a script and run it by path.
+        polled out via the curl egress. On Windows keep ``command`` short (Win+R caps ~255
+        chars, no embedded double-quotes); for more, upload a script and run it by path.
+        On a Mac VM the command is a zsh line typed into Terminal, with neither limit.
 
         >>> s.run("whoami")
         'win10\\\\user'
         """
-        if '"' in command:
-            raise BlingError(
-                "command must not contain double-quotes for Win+R routing — "
-                "upload a script and run it by path instead"
-            )
         tag = uuid.uuid4().hex[:8]
         log = f"_blrun_{tag}.log"
         marker = f"__DONE_{tag}__"
-        dl = rf"%USERPROFILE%\Downloads\{log}"
-        launch = f'cmd /c "({command}) > {dl} 2>&1 & echo {marker}>> {dl}"'
-        if len(launch) > 255:
-            raise BlingError("command too long for Win+R — upload a script and run it by path")
+        if self.is_mac:
+            dl = f"~/Downloads/{log}"
+            launch = f"({command}) > {dl} 2>&1; echo {marker} >> {dl}"
+        else:
+            if '"' in command:
+                raise BlingError(
+                    "command must not contain double-quotes for Win+R routing — "
+                    "upload a script and run it by path instead"
+                )
+            dl = rf"%USERPROFILE%\Downloads\{log}"
+            launch = f'cmd /c "({command}) > {dl} 2>&1 & echo {marker}>> {dl}"'
+            if len(launch) > 255:
+                raise BlingError("command too long for Win+R — upload a script and run it by path")
         server, token = self.transfer_token()  # cache before launch; poll is HTTP-only
-        self.focus_vm()
-        self.page.keyboard.press("Meta+r")  # Win+R
-        self.page.wait_for_timeout(900)
-        self.page.keyboard.type(launch, delay=8)
-        self.page.keyboard.press("Enter")
+        self._launch(launch, delay=8)
         end = time.time() + timeout
         last = ""
         while time.time() < end:
@@ -637,7 +646,9 @@ class Session:
         self, remote_name: str, *, sentinel: str, timeout: int = 90, poll: float = 3.0
     ) -> None:
         """Launch an uploaded .bat/.py/.ps1 in the VM and wait until it writes ``sentinel``
-        (a filename it creates in Downloads).
+        (a filename it creates in Downloads). On a Mac VM the script is a .sh/.zsh (run
+        with zsh) or a .py (run with python3), started in the background from Terminal so
+        the window is free for the next ``run()``.
 
         Use this for scripts that spawn apps or run long; ``run()`` redirects output to a
         log, and a process the script ``start``s would inherit (and lock) that handle. For
@@ -655,11 +666,12 @@ class Session:
         )  # cache before Win+R; opening it mid-keystroke would steal focus
         if self._vm_file_exists(sentinel):
             self.remove(sentinel)
-        self.focus_vm()
-        self.page.keyboard.press("Meta+r")
-        self.page.wait_for_timeout(900)
-        self.page.keyboard.type(rf"cmd /c %USERPROFILE%\Downloads\{remote_name}", delay=10)
-        self.page.keyboard.press("Enter")
+        if self.is_mac:
+            _check_vm_name(remote_name)  # typed into zsh unquoted
+            runner = "python3" if remote_name.endswith(".py") else "zsh"
+            self._launch(f"nohup {runner} ~/Downloads/{remote_name} > /dev/null 2>&1 &")
+        else:
+            self._launch(rf"cmd /c %USERPROFILE%\Downloads\{remote_name}")
         end = time.time() + timeout
         n = 0
         while time.time() < end:
@@ -687,8 +699,11 @@ class Session:
             return
         for name in remote_names:
             _check_vm_name(name)
-        dl = r"%USERPROFILE%\Downloads"
-        self.run("del /q " + " ".join(rf"{dl}\{n}" for n in remote_names))
+        if self.is_mac:
+            self.run("rm -f " + " ".join(f"~/Downloads/{n}" for n in remote_names))
+        else:
+            dl = r"%USERPROFILE%\Downloads"
+            self.run("del /q " + " ".join(rf"{dl}\{n}" for n in remote_names))
         left = [n for n in remote_names if self._vm_file_exists(n)]
         if left:
             raise BlingError(f"could not delete {', '.join(left)} from the VM's Downloads")
@@ -702,10 +717,48 @@ class Session:
             raise EgressError(f"could not check {remote_name!r} in the VM: {e}") from e
         return r.status_code == 200
 
-    def focus_vm(self, point: tuple[int, int] = config.REMOTE_FOCUS) -> None:
+    def focus_vm(self, point: tuple[int, int] | None = None) -> None:
         """Give the VM keyboard focus so OS shortcuts (Win+R) forward. No side effects."""
+        if point is None:
+            point = config.REMOTE_FOCUS_MAC if self.is_mac else config.REMOTE_FOCUS
         self.page.mouse.click(*point)
         self.page.wait_for_timeout(250)
+
+    def launch_app(self, name: str) -> None:
+        """Mac VMs only: open (or bring forward) an app from the control panel's
+        "Launch apps" menu, e.g. ``"Terminal"``, ``"Finder"`` or ``"Xcode"``.
+
+        >>> s.launch_app("Terminal")
+        """
+        if not self.is_mac:
+            raise BlingError("launch_app() is for Mac VMs; open the session with os='mac'")
+        self._close_popups()
+        self._open_menu("apps")
+        item = self.page.locator(".option-apps .option-version", has_text=name).first
+        if not item.count():
+            have = self.page.locator(".option-apps .option-version").all_inner_texts()
+            self._close_popups()
+            raise BlingError(f"no app {name!r} in Launch apps; offered: {', '.join(have)}")
+        item.click(timeout=4000)
+        self.page.wait_for_timeout(2500)  # cold start; an app already open just comes forward
+
+    def _launch(self, line: str, *, delay: int = 10) -> None:
+        """Type one command line into the VM and press Enter: the Win+R box on Windows,
+        Terminal on a Mac. Output is the caller's to redirect; nothing is read back here."""
+        if self.is_mac:
+            # Terminal comes forward even if an upload left Finder's Downloads on top.
+            self.launch_app("Terminal")
+            self.focus_vm()
+            # The first key after focusing is dropped, so spend it on a harmless space
+            # (seen 2026-09-30: "(whoami ..." arrived as "whoami ..." and failed to parse).
+            self.page.keyboard.press("Space")
+            self.page.wait_for_timeout(300)
+        else:
+            self.focus_vm()
+            self.page.keyboard.press("Meta+r")  # Win+R
+            self.page.wait_for_timeout(900)
+        self.page.keyboard.type(line, delay=delay)
+        self.page.keyboard.press("Enter")
 
     def key(self, combo: str) -> None:
         """Press a key/chord in the focused VM window, e.g. ``"Control+Shift+E"``."""

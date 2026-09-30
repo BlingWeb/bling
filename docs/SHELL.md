@@ -208,7 +208,8 @@ The recording is meant to be shareable, so **plaintext passwords must never land
 Every `BlingError` is caught at the dispatch level and printed as `error: <msg>`. Interactively
 you just recover at the prompt; during `play` the run aborts at the first failing line and
 reports where it stopped. For example, `run` surfaces its own guidance when a command is too
-long or contains double-quotes (Win+R can't route it) instead of failing silently.
+long or contains double-quotes (Win+R can't route it) instead of failing silently. On a Mac
+VM neither limit applies, because the command is typed into Terminal.
 
 ## Playback vs. the prompt
 

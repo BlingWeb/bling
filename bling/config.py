@@ -28,6 +28,13 @@ FIREFOX_EXE = r"D:\browsers\firefox\firefox-140\firefox.exe"
 # Inner-browser click points, page CSS coords @1500x850 (verified live).
 REMOTE_ADDR_BAR = (450, 103)  # remote browser's own address bar
 REMOTE_FOCUS = (760, 60)  # tab strip — click to give the VM keyboard focus (Win+R etc.)
+# On a Mac VM the same click lands on the empty right half of the macOS menu bar, which
+# gives the canvas focus without switching apps (verified live 2026-09-30, macOS 15.2).
+REMOTE_FOCUS_MAC = (1000, 76)
+
+# The Mac VM has no Win+R equivalent that forwards (Cmd+Space never reaches Spotlight),
+# so commands go through Terminal, opened from the control panel's "Launch apps" menu.
+MAC_OS_SLUGS = ("mac",)
 
 # Common OS/browser slugs for the /browse/<os>/<browser>/<url> convention (picker has more).
 OS_SLUGS = ("win10", "win11", "win7", "mac", "android", "ios")
@@ -39,6 +46,7 @@ MENU_ITEMS = {
     "capture": "capture-screen",
     "proxy": "proxy-and-vpn",
     "files": "file-transfer",
+    "apps": "launch-apps",  # Mac VMs only: Finder, Terminal, Xcode
     "devtools": "show-devtools",
     "share": "share-browser",
     "end": "end-session",

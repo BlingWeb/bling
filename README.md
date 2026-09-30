@@ -21,11 +21,12 @@ of every network request the page made: each redirect, script, and API call, wit
 timing. It's recorded by a real Firefox inside the VM, with no CDP or automation flags a page
 could detect, so the log is faithful and you analyse it offline.
 
-> **Scope:** HAR capture and the VM shell / file-transfer features run in a **Firefox-on-Windows**
-> VM: bling drives Firefox's own built-in network monitor, and the shell uses Windows
-> conventions (Win+R, the `Downloads` folder). You can still *open* a page in other browsers or
-> OSes to compare what renders (see the [browser/OS cloaking example](examples/env_cloaking.py)),
-> but the network capture itself is Firefox-on-Windows.
+> **Scope:** HAR capture runs in a **Firefox-on-Windows** VM, because bling drives Firefox's own
+> built-in network monitor. The VM shell and file transfer work on Windows VMs (through Win+R)
+> and on **macOS** VMs (through Terminal, `open(..., os="mac", browser="safari")`); see
+> [API.md](docs/API.md). You can still *open* a page in other browsers or OSes to compare what
+> renders (see the [browser/OS cloaking example](examples/env_cloaking.py)), but the network
+> capture itself is Firefox-on-Windows.
 
 Built to be obvious for humans and for AI agents. See [`CODING_STANDARD.md`](CODING_STANDARD.md).
 
@@ -182,5 +183,5 @@ A Browserling session is two layers, and the API hides the seam:
   on your machine (the control panel that carries your login).
 - **Inner remote browser**: the browser running inside the VM, seen only as pixels in a canvas;
   HAR capture always loads the page in the VM's **Firefox**. Synthetic keyboard/mouse forward
-  into the VM, so shell/keystroke ops run "blind" (Win+R, etc.). Files move via Browserling's
+  into the VM, so shell/keystroke ops run "blind" (Win+R on Windows, Terminal on a Mac). Files move via Browserling's
   curl file-transfer (HTTP PUT in, GET out).
