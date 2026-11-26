@@ -267,8 +267,131 @@ def test_mac_remove_uses_rm(monkeypatch):
     assert ("run", "rm -f ~/Downloads/a.txt ~/Downloads/b.txt") in log
 
 
-def test_launch_app_refuses_a_windows_session():
+def test_launch_app_refuses_a_phone_session():
     from bling.session import Session
 
-    with pytest.raises(BlingError, match="Mac VMs"):
-        Session().launch_app("Terminal")
+    s = Session()
+    s.os = "ios18"
+    with pytest.raises(BlingError, match="no Launch apps menu"):
+        s.launch_app("Terminal")
+
+
+# --- OS names and families ----------------------------------------------------
+@pytest.mark.parametrize(
+    "name, slug",
+    [
+        ("Windows 11", "win11"),
+        ("windows 8.1", "win8.1"),
+        ("Windows XP", "winxp"),
+        ("macOS 15", "mac15"),
+        ("iOS 18", "ios18"),
+        ("Android 12.1", "android12.1"),
+        ("win10", "win10"),
+        ("mac", "mac"),
+    ],
+)
+def test_os_slug(name, slug):
+    from bling import config
+
+    assert config.os_slug(name) == slug
+
+
+def test_os_family():
+    from bling import config
+
+    assert [config.os_family(s) for s in ("win8.1", "mac", "ios18", "android15")] == [
+        "win",
+        "mac",
+        "ios",
+        "android",
+    ]
+    with pytest.raises(ValueError, match="not an OS slug"):
+        config.os_family("linux")
+
+
+def test_open_refuses_an_unknown_os_before_touching_the_browser():
+    from bling.session import Session
+
+    with pytest.raises(BlingError, match="not an OS slug"):
+        Session().open("example.com", os="linux")
+
+
+def test_platform_follows_the_open_os():
+    from bling.session import Session
+
+    s = Session()
+    assert (s.platform, s.is_mac) == ("win", False)
+    s.os = "mac15"
+    assert (s.platform, s.is_mac) == ("mac", True)
+
+
+# --- refusals that need no live session ----------------------------------------
+def test_set_os_needs_an_open_session():
+    from bling.session import Session
+
+    with pytest.raises(BlingError, match="call open"):
+        Session().set_os("Windows 11")
+
+
+@pytest.mark.parametrize(
+    "call, match",
+    [
+        (lambda s: s.navigate("example.com", via="tab"), "'panel' or 'remote'"),
+        (lambda s: s.set_resolution("big"), "not a screen size"),
+        (lambda s: s.set_scale(140), "0 to 100"),
+        (lambda s: s.set_scale("half"), "0 to 100"),
+        (lambda s: s.open_tunnel("localhost:1", client="telnet"), "one of ssh"),
+        (lambda s: s.set_orientation(90), "iOS sessions"),
+        (lambda s: s.press_button("home"), "iOS sessions"),
+        (lambda s: s.set_device("iPhone 15"), "iOS sessions"),
+        (lambda s: s.devices(), "iOS sessions"),
+        (lambda s: s.show_devtools(), "iOS sessions"),
+    ],
+)
+def test_bad_arguments_are_refused_before_any_click(call, match):
+    from bling.session import Session
+
+    with pytest.raises(BlingError, match=match):
+        call(Session())
+
+
+def test_ios_refuses_bad_button_and_angle():
+    from bling.session import Session
+
+    s = Session()
+    s.os = "ios18"
+    with pytest.raises(BlingError, match="one of home"):
+        s.press_button("power")
+    with pytest.raises(BlingError, match="0, 90, 180, 270"):
+        s.set_orientation(45)
+    with pytest.raises(BlingError, match="pick a device"):
+        s.set_resolution("1280x1024")
+
+
+def test_capture_refuses_a_non_windows_os():
+    import bling
+    from bling.session import Session
+
+    with pytest.raises(BlingError, match="Windows"):
+        bling.capture(Session(), "example.com", os="mac15")
+
+
+def test_capture_refuses_an_unknown_os_with_a_bling_error():
+    import bling
+    from bling.session import Session
+
+    with pytest.raises(BlingError, match="not an OS slug"):
+        bling.capture(Session(), "example.com", os="linux")
+
+
+def test_count_reads_counters_as_the_page_prints_them():
+    from bling.session import _count
+
+    assert [_count(x) for x in ("0", " 12 ", "1,204", "1.2K", None, "")] == [
+        0,
+        12,
+        1204,
+        "1.2K",
+        0,
+        0,
+    ]

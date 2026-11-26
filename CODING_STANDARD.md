@@ -30,7 +30,7 @@ This standard is short on purpose. If a rule needs a paragraph to justify, it's 
 - **Structured, serializable returns.** Prefer plain data (dict/list/str) or thin wrappers over
   it. An agent should be able to `.save()` or inspect results without guessing.
 - **Errors tell you how to fix them.** Messages are actionable, not just descriptive:
-  `"Not logged in — run: bling login"`, not `"auth error"`. A typed hierarchy lets callers
+  `"Not logged in — run once: bling login"`, not `"auth error"`. A typed hierarchy lets callers
   branch (`NotLoggedIn`, `SessionBlocked`, `Timeout`, `EgressError`).
 - **Fail fast and loud.** Surface failures immediately (Zen: errors never pass silently). No
   silent retries that hide a broken state.
@@ -52,7 +52,7 @@ This standard is short on purpose. If a rule needs a paragraph to justify, it's 
   viewport, coordinates, timeouts) live in `config.py`, never inline in logic.
 - **Comments explain WHY, not WHAT.** The code already says what. Comment the non-obvious
   (e.g. *"focus the canvas first so Win+R forwards into the VM"*).
-- **Minimal dependencies.** Currently: `playwright`, `requests`, `python-dotenv`. No npm. Add a
+- **Minimal dependencies.** Currently: `playwright`, `requests`, `python-dotenv`, `rich`. No npm. Add a
   dependency only when it removes real complexity.
 
 ## Testing

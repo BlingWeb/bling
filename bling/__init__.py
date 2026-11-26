@@ -21,7 +21,7 @@ from .errors import (
 from .har import HAR, arm_capture, capture, capture_count, capture_here, sweep_captures
 from .session import Session, login
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def har(

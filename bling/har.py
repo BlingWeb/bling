@@ -144,6 +144,14 @@ def capture(session: Session, url: str, *, os: str = "win10", timeout: int = 45)
     ...     s.require_login()
     ...     h = bling.capture(s, "demo.browserling.com")
     """
+    try:
+        family = config.os_family(config.os_slug(os))
+    except ValueError as e:
+        raise BlingError(str(e)) from None
+    if family != "win":
+        raise BlingError(
+            f"HAR capture runs on a Windows session only (it launches a .bat there); got os={os!r}"
+        )
     session.open("example.com", os=os, browser="firefox")  # benign start; our own FF loads it
     return _run_capture(session, url, timeout=timeout)
 
