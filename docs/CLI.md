@@ -12,6 +12,7 @@ bling urls  <file.har> [--summary]
 bling open  <url> [--os OS] [--browser BROWSER] [--proxy KIND] [--country NAME] [--live] [-k]
 bling run   "<command>" [--os OS] [--browser BROWSER] [--live]
 bling shell [--record FILE] [--play FILE] [--headless]
+bling do    "<command>" ["<command>" ...] [--live]
 bling play  <file.bling> [--live]
 bling --version
 ```
@@ -24,7 +25,8 @@ the path.
 - **Exit code.** `0` when the command did what it was asked. `1` when bling raised an
   error (not logged in, session refused, a timeout, a failed transfer); the error is shown
   in a red panel that says how to fix it. `2` when the arguments are wrong, with usage text
-  (argparse's convention). `bling play` also returns `1` when a line of the recording fails.
+  (argparse's convention). `bling play` and `bling do` also return `1` when one of their
+  commands fails.
 - **Data goes to standard output, everything else to standard error.** The URLs from
   `bling urls`, the output of `bling run` and the screenshot path from `bling open` are
   plain text on stdout, so they pipe cleanly. Progress spinners, success lines, tables and
@@ -69,7 +71,8 @@ bling har demo.browserling.com
 bling har suspicious.example --proxy residential --country germany --out de.har
 ```
 
-A custom proxy (your own SOCKS or HTTP server) is not offered here; use
+A custom proxy (your own SOCKS or HTTP server) is not offered on this command; use the
+shell's `proxy custom` (through `bling do` or `bling shell`) and `har`, or
 [`Session.set_proxy("custom", ...)`](API.md#set_proxy) from Python.
 
 ## `bling urls <file.har>`
@@ -138,6 +141,29 @@ type as a `.bling` file. All of its commands are in [SHELL.md](SHELL.md).
 | `--headless` | Do not show the browser window |
 
 `python -m bling.shell` takes the same flags.
+
+## `bling do "<command>" ...`
+
+Runs [shell commands](SHELL.md#command-reference) given as arguments, in order, in one
+session, with no prompt. This is the whole API from one command line: every `Session`
+method has a shell command, so anything Python can do, `bling do` can do.
+
+Each argument is one command, quoted. It stops at the first command that fails and returns
+`1`; otherwise `0`. The session is ended when the last command finishes. Output that is
+data (a `run`'s output, a path, a link, `status`) goes to stdout.
+
+| Flag | Meaning |
+|---|---|
+| `--live` | Show the browser window |
+
+```bash
+bling do "open example.com" "dismiss" "browser Firefox" "screenshot ff.png --remote-only"
+bling do "open example.com --os ios18 --browser safari --timeout 120" "rotate 90" "screenshot phone.png"
+bling do "open example.com" "write note.txt hello" "run type C:\Users\user\Downloads\note.txt"
+```
+
+Use `bling play` for the same commands kept in a file, and `bling shell` to type them one
+at a time and watch.
 
 ## `bling play <file.bling>`
 

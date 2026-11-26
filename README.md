@@ -145,7 +145,11 @@ Or drive a session by hand and save it as a replayable script with the **interac
 ```bash
 bling shell --record login.bling    # type verbs, watch them hit a live VM, record
 bling play  login.bling             # replay unattended (no prompt, no TTY)
+bling do "open example.com" "browser Firefox" "screenshot ff.png --remote-only"   # no file either
 ```
+
+The shell has a command for every `Session` method, so the command line can do everything
+the Python API can.
 
 Secrets stay out of recordings: `type_env APP_PASSWORD` types the env var's value but
 records only its name. Full command reference in [`docs/SHELL.md`](docs/SHELL.md).

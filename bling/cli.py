@@ -7,6 +7,7 @@ bling open example.com --browser firefox
 bling open https://app.example.com/login --keep-open   # attended session
 bling run "whoami"
 bling shell --record login.bling    # interactive REPL, records a .bling file
+bling do "open example.com" "browser Firefox" "screenshot a.png"   # same verbs, no prompt
 bling play login.bling              # replay a recording unattended
 """
 
@@ -20,7 +21,7 @@ from urllib.parse import urlparse
 
 from . import HAR, Session, __version__, capture_here, har, login, ui
 from .errors import BlingError
-from .shell import run_shell
+from .shell import run_lines, run_shell
 
 
 def _wait_until_closed(s) -> None:
@@ -108,6 +109,10 @@ def main(argv=None) -> int:
     p.add_argument("--play", metavar="FILE", help="replay FILE first, then drop to the prompt")
     p.add_argument("--headless", action="store_true", help="run without showing the browser window")
 
+    p = sub.add_parser("do", help="run shell commands in one session, then exit (no prompt)")
+    p.add_argument("lines", nargs="+", metavar="COMMAND", help="a shell command, quoted")
+    p.add_argument("--live", action="store_true", help="show the browser window")
+
     p = sub.add_parser("play", help="replay a .bling recording unattended (no prompt, no TTY)")
     p.add_argument("file")
     p.add_argument("--live", action="store_true", help="show the browser window during replay")
@@ -174,6 +179,9 @@ def main(argv=None) -> int:
         if args.cmd == "shell":
             # Interactive by default shows the browser; --headless overrides.
             return run_shell(record=args.record, play=args.play, headless=args.headless)
+        if args.cmd == "do":
+            # Every shell verb, with no prompt: one session, lines in order, stop on error.
+            return run_lines(args.lines, headless=not args.live)
         if args.cmd == "play":
             # Unattended replay: headless unless --live; exits when the file ends.
             return run_shell(play=args.file, headless=not args.live, exit_after_play=True)

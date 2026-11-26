@@ -32,6 +32,12 @@ against live sessions on the release date (`tests/test_live_panel.py`).
   PowerShell, WSL) as well as Mac; `apps()` lists them.
 - **Shell verbs:** `browser`, `os`, `scale`, `clipboard`, `app`, `share`, `tunnel`,
   `device`, `rotate`, `button`, `devtools`, `proxy status`, `screenshot --remote-only`.
+- **The shell covers the whole API.** New verbs `dismiss`, `ready`, `status`, `script`,
+  `write`, `remove`, `token`, `proxy custom`, `login status`, `capture count`, and new
+  options `open --timeout`, `run --timeout`, `download --wait`, `click --double`. A test
+  fails if a public `Session` method has no shell command.
+- **`bling do "<command>" ...`** runs shell commands from the command line in one session,
+  with no prompt and no file.
 - **Docs:** quickstart, advanced guide, full API reference, error reference, environments,
   command-line reference, troubleshooting, contributing guide, this changelog.
 

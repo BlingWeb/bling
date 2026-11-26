@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import cmd
 import os
+import re
 import shlex
 import time
 from datetime import datetime
@@ -51,10 +52,46 @@ _EOF_HINT = "Ctrl-Z then Enter" if os.name == "nt" else "Ctrl-D"
 
 # Order verbs appear in the `help` table (grouped by workflow, not alphabetical).
 _HELP_ORDER = (
-    "login", "open", "navigate", "browser", "os", "proxy", "resolution", "scale", "focus",
-    "key", "type", "type_env", "click", "clipboard", "run", "app", "upload", "download",
-    "screenshot", "har", "urls", "capture", "share", "tunnel", "device", "rotate", "button",
-    "devtools", "wait", "end", "record", "play", "quit",
+    "login",
+    "open",
+    "ready",
+    "status",
+    "navigate",
+    "browser",
+    "os",
+    "proxy",
+    "resolution",
+    "scale",
+    "dismiss",
+    "focus",
+    "key",
+    "type",
+    "type_env",
+    "click",
+    "clipboard",
+    "run",
+    "script",
+    "app",
+    "upload",
+    "write",
+    "download",
+    "remove",
+    "token",
+    "screenshot",
+    "har",
+    "urls",
+    "capture",
+    "share",
+    "tunnel",
+    "device",
+    "rotate",
+    "button",
+    "devtools",
+    "wait",
+    "end",
+    "record",
+    "play",
+    "quit",
 )
 
 
@@ -96,6 +133,21 @@ def _split_opts(tokens: list[str], flags: set[str]) -> tuple[list[str], dict[str
             positional.append(tok)
             i += 1
     return positional, opts
+
+
+def _seconds(text: str, what: str) -> int:
+    """Parse a whole number of seconds for ``what``, or raise a BlingError that says so.
+
+    >>> _seconds("90", "ready")
+    90
+    """
+    try:
+        value = int(text.strip())
+    except ValueError:
+        raise BlingError(f"{what} needs a whole number of seconds, not {text!r}") from None
+    if value <= 0:
+        raise BlingError(f"{what} needs a number of seconds above zero, not {value}")
+    return value
 
 
 class BlingShell(cmd.Cmd):
@@ -257,7 +309,7 @@ class BlingShell(cmd.Cmd):
 
     # --- verbs: auth ---------------------------------------------------------
     def do_login(self, arg: str) -> None:
-        """login — solve the one-time CAPTCHA login (do this before `open` if the cookie expired).
+        """login | login status — solve the one-time CAPTCHA login, or report whether it holds.
 
         Opens a headed Chrome window on the shared profile; you solve the CAPTCHA, the cookie
         is saved, and later `open` calls are unattended. Must run before any session is open.
@@ -267,21 +319,30 @@ class BlingShell(cmd.Cmd):
                 "log in before opening a session — a live session holds the browser profile; "
                 "quit and restart the shell, then `login`"
             )
+        if arg.strip() == "status":
+            with Session(headless=True) as probe:
+                ok = probe.is_logged_in()
+            print("logged in" if ok else "not logged in — run `login`")
+            return
         ui.info("opening a login window — solve the CAPTCHA there, then come back here …")
         login()  # headed Chrome on the shared profile; blocks until solved (or times out)
         ui.success("logged in — the cookie is saved; `open <url>` will work now")
 
     # --- verbs: session ------------------------------------------------------
     def do_open(self, arg: str) -> None:
-        """open <url> [--os win10] [--browser chrome138] — open a session and wait until ready.
+        """open <url> [--os win10] [--browser chrome138] [--timeout 45] — open a session.
 
-        Creates the browser (and checks login) on first use. e.g. `open example.com`.
+        Starts a fresh machine and waits until it is ready; `--timeout` is how many seconds
+        to wait (phones and Macs want 120). Creates the browser (and checks login) on first
+        use. e.g. `open example.com`.
         """
-        pos, opts = _split_opts(_lex(arg), {"--os", "--browser"})
+        pos, opts = _split_opts(_lex(arg), {"--os", "--browser", "--timeout"})
         if not pos:
-            print("usage: open <url> [--os win10] [--browser chrome138]")
+            print("usage: open <url> [--os win10] [--browser chrome138] [--timeout 45]")
             return
         kwargs = {}
+        if "--timeout" in opts:
+            kwargs["ready_timeout"] = _seconds(opts["--timeout"], "open --timeout")
         if "--os" in opts:
             kwargs["os"] = opts["--os"]
         if "--browser" in opts:
@@ -292,6 +353,22 @@ class BlingShell(cmd.Cmd):
         with ui.status(f"opening {pos[0]} on {os_}/{browser} …"):
             state = s.open(pos[0], **kwargs)
         ui.success(f"{state}: {pos[0]} on {os_}/{browser}")
+
+    def do_ready(self, arg: str) -> None:
+        """ready [seconds] — wait until the remote screen is streaming (default 45 seconds)."""
+        timeout = _seconds(arg, "ready") if arg.strip() else 45
+        ui.success(self._need_session().wait_ready(timeout=timeout))
+
+    def do_status(self, arg: str) -> None:
+        """status — show the session's OS, browser, address and proxy."""
+        s = self._need_session()
+        now = s._menu_lists()
+        print(f"os:      {now['platform']} ({s.os}, family {s.platform})")
+        print(f"browser: {now['browser']}")
+        if now["device"]:
+            print(f"device:  {now['device']}")
+        print(f"address: {s.page.url}")
+        print(f"proxy:   {s.proxy_status()['status']}")
 
     def do_navigate(self, arg: str) -> None:
         """navigate <url> [--via panel|remote] — load a new URL in the running session.
@@ -350,17 +427,23 @@ class BlingShell(cmd.Cmd):
         ui.success(f"{state}: {config.os_slug(name)}")
 
     def do_proxy(self, arg: str) -> None:
-        """proxy <kind> [country] | proxy status — route the session through a proxy/VPN.
+        """proxy <kind> [country] | proxy custom <host:port> | proxy status — set the exit.
 
         kind is one of datacenter | residential | mobile | tor. e.g. `proxy mobile "United States"`.
-        `proxy status` prints the exit address the session is using now.
+        `proxy custom proxy.example.org:1080 --user me --password-env PROXY_PASS` uses your own
+        SOCKS or HTTP proxy (`--protocol SOCKS5|SOCKS4|HTTP`); the password comes from an env
+        var so it never lands in a recording. `proxy status` prints the exit in use now.
         """
         toks = _lex(arg)
         if not toks:
-            print(f"usage: proxy <{'|'.join(_PROXY_KINDS)}> [country] | proxy status")
+            kinds = "|".join(_PROXY_KINDS)
+            print(f"usage: proxy <{kinds}> [country] | proxy custom ... | proxy status")
             return
         if toks[0] == "status":
             print(self._need_session().proxy_status()["status"])
+            return
+        if toks[0] == "custom":
+            self._proxy_custom(toks[1:])
             return
         kind = toks[0]
         country = toks[1] if len(toks) > 1 else None
@@ -374,6 +457,45 @@ class BlingShell(cmd.Cmd):
         if self._cap is not None:
             # Mark that pages captured from here on were served through this proxy.
             self._cap["bounds"].append((capture_count(s), self._proxy_label))
+
+    def _proxy_custom(self, toks: list[str]) -> None:
+        """`proxy custom <host:port> [--protocol P] [--user U] [--password-env VAR]`."""
+        pos, opts = _split_opts(toks, {"--protocol", "--user", "--password-env"})
+        if not pos:
+            print(
+                "usage: proxy custom <host:port> [--protocol SOCKS5|SOCKS4|HTTP] "
+                "[--user NAME] [--password-env ENVVAR]"
+            )
+            return
+        password = None
+        if "--password-env" in opts:
+            password = self._env(opts["--password-env"], "proxy custom --password-env")
+        s = self._need_session()
+        with ui.status(f"routing through your proxy at {pos[0]} …"):
+            s.set_proxy(
+                "custom",
+                address=pos[0],
+                username=opts.get("--user"),
+                password=password,
+                protocol=opts.get("--protocol", "SOCKS5"),
+            )
+            state = s.wait_ready(timeout=45)
+        ui.success(state)
+        self._proxy_label = "custom"
+
+    def _env(self, var: str, what: str) -> str:
+        """The value of env var ``var``, also looked for in .env and keys.env; raise if unset."""
+        if os.getenv(var) is None:
+            # The same files `bling login` reads, so a recording's secrets can live in .env.
+            load_dotenv(find_dotenv("keys.env", usecwd=True))
+            load_dotenv(find_dotenv(usecwd=True))
+        value = os.getenv(var)
+        if value is None:
+            raise BlingError(
+                f"env var {var} is not set — export it, or put it in .env or keys.env, "
+                f"before `{what}`"
+            )
+        return value
 
     def do_resolution(self, arg: str) -> None:
         """resolution <WxH> — set the remote screen resolution, e.g. `resolution 1920x1080`."""
@@ -390,6 +512,14 @@ class BlingShell(cmd.Cmd):
         except ValueError:
             raise BlingError("scale needs a whole number from 0 to 100: scale <0-100>") from None
         self._need_session().set_scale(percent)
+
+    def do_dismiss(self, arg: str) -> None:
+        """dismiss — close every Browserling window and popup; hand the keyboard to the VM.
+
+        Use it after `open`, `proxy` and `resolution`, whose windows otherwise sit in
+        screenshots and swallow clicks.
+        """
+        self._need_session().dismiss()
 
     def do_focus(self, arg: str) -> None:
         """focus — give the VM keyboard focus so OS shortcuts (Win+R) forward into it."""
@@ -421,31 +551,24 @@ class BlingShell(cmd.Cmd):
         if not var:
             print("usage: type_env <ENVVAR>")
             return
-        if os.getenv(var) is None:
-            # The same files `bling login` reads, so a recording's secrets can live in .env.
-            load_dotenv(find_dotenv("keys.env", usecwd=True))
-            load_dotenv(find_dotenv(usecwd=True))
-        value = os.getenv(var)
-        if value is None:
-            raise BlingError(
-                f"env var {var} is not set — export it, or put it in .env or keys.env, "
-                f"before `type_env {var}`"
-            )
+        value = self._env(var, f"type_env {var}")
         self._need_session().type(value)
         ui.info(f"(secret typed from env: {var})")
         self._record_comment(f"(secret typed from env: {var})")
 
     def do_click(self, arg: str) -> None:
-        """click <x> <y> — click a pixel in the remote view, e.g. `click 450 103`."""
+        """click <x> <y> [--double] — click a pixel in the remote view, e.g. `click 450 103`."""
         toks = _lex(arg)
+        double = "--double" in toks
+        toks = [tok for tok in toks if tok != "--double"]
         if len(toks) != 2:
-            print("usage: click <x> <y>")
+            print("usage: click <x> <y> [--double]")
             return
         try:
             x, y = int(toks[0]), int(toks[1])
         except ValueError:
             raise BlingError("click needs two integer pixel coordinates: click <x> <y>") from None
-        self._need_session().canvas_click(x, y)
+        self._need_session().canvas_click(x, y, clicks=2 if double else 1)
 
     def do_clipboard(self, arg: str) -> None:
         """clipboard get | clipboard set <text> — read or set the remote machine's clipboard.
@@ -472,16 +595,40 @@ class BlingShell(cmd.Cmd):
         s.launch_app(name)
 
     def do_run(self, arg: str) -> None:
-        """run <command> — run a shell command in the VM and print its output.
+        """run [--timeout 60] <command> — run a shell command in the VM and print its output.
 
-        Keep it short (Win+R caps ~255 chars, no embedded double-quotes); for more, upload
-        a script and run it by path. e.g. `run whoami`.
+        Keep it short (Win+R caps ~255 chars, no embedded double-quotes); for more, `write`
+        or `upload` a script and start it with `script`. e.g. `run whoami`,
+        `run --timeout 180 ping -n 100 example.com`.
         """
         cmd_str = arg.strip()
+        kwargs = {}
+        m = re.match(r"--timeout\s+(\S+)\s+(.*)", cmd_str, re.S)
+        if m:
+            kwargs["timeout"] = _seconds(m.group(1), "run --timeout")
+            cmd_str = m.group(2).strip()
         if not cmd_str:
-            print("usage: run <command>")
+            print("usage: run [--timeout 60] <command>")
             return
-        print(self._need_session().run(cmd_str))
+        print(self._need_session().run(cmd_str, **kwargs))
+
+    def do_script(self, arg: str) -> None:
+        """script <remote_name> <sentinel> [--timeout 90] — start an uploaded script and wait.
+
+        For scripts that open programs or run long, where `run` would hang. The script must
+        create a non-empty file named <sentinel> in Downloads when it has finished.
+        e.g. `script job.bat job.done --timeout 300`.
+        """
+        pos, opts = _split_opts(_lex(arg), {"--timeout"})
+        if len(pos) != 2:
+            print("usage: script <remote_name> <sentinel> [--timeout 90]")
+            return
+        kwargs = {}
+        if "--timeout" in opts:
+            kwargs["timeout"] = _seconds(opts["--timeout"], "script --timeout")
+        with ui.status(f"running {pos[0]} until it writes {pos[1]} …"):
+            self._need_session().run_script(pos[0], sentinel=pos[1], **kwargs)
+        ui.success(f"{pos[0]} finished ({pos[1]} written)")
 
     def do_upload(self, arg: str) -> None:
         """upload <local_path> [remote_name] — push a local file into the VM's Downloads."""
@@ -493,14 +640,61 @@ class BlingShell(cmd.Cmd):
         name = self._need_session().upload(toks[0], remote)
         print(f"uploaded -> {name}")
 
-    def do_download(self, arg: str) -> None:
-        """download <remote_name> <out_path> — pull a file out of the VM to the local machine."""
-        toks = _lex(arg)
-        if len(toks) != 2:
-            print("usage: download <remote_name> <out_path>")
+    def do_write(self, arg: str) -> None:
+        """write <remote_name> <text> — write one line of <text> as a file in the VM's Downloads.
+
+        For a one-line script or a config; chain commands in a .bat with `&`. For anything
+        longer, `upload` a local file. RECORDED IN PLAINTEXT.
+        e.g. `write note.txt checked by bling`, then `run type C:/Users/user/Downloads/note.txt`.
+        """
+        name, _, text = arg.strip().partition(" ")
+        if not name or not text:
+            print("usage: write <remote_name> <text>")
             return
-        out = self._need_session().download(toks[0], toks[1])
+        saved = self._need_session().upload_text(text + chr(10), name)
+        print(f"wrote -> {saved}")
+
+    def do_download(self, arg: str) -> None:
+        """download <remote_name> <out_path> [--wait SECONDS] — pull a file out of the VM.
+
+        `--wait` is for a file the VM is still writing: it waits up to that many seconds for
+        the file to appear and stop growing.
+        """
+        pos, opts = _split_opts(_lex(arg), {"--wait"})
+        if len(pos) != 2:
+            print("usage: download <remote_name> <out_path> [--wait SECONDS]")
+            return
+        s = self._need_session()
+        if "--wait" in opts:
+            wait = _seconds(opts["--wait"], "download --wait")
+            out = s.download_when_ready(pos[0], pos[1], timeout=wait)
+        else:
+            out = s.download(pos[0], pos[1])
         print(str(out))
+
+    def do_remove(self, arg: str) -> None:
+        """remove <remote_name>... — delete files from the VM's Downloads and confirm they went."""
+        names = _lex(arg)
+        if not names:
+            print("usage: remove <remote_name>...")
+            return
+        self._need_session().remove(*names)
+        ui.info(f"removed {', '.join(names)}")
+
+    def do_token(self, arg: str) -> None:
+        """token download | token upload — print the session's file-transfer server and token.
+
+        Files are at https://<server>/<token>/<name>: GET to download, PUT to upload. The
+        token is a secret for the life of the session.
+        """
+        sub = arg.strip()
+        s = self._need_session()
+        if sub == "download":
+            print(" ".join(s.transfer_token()))
+        elif sub == "upload":
+            print(" ".join(s.upload_token()))
+        else:
+            print("usage: token download | token upload")
 
     def do_screenshot(self, arg: str) -> None:
         """screenshot [path] [--remote-only] — save a PNG of the session (default: shot.png).
@@ -548,7 +742,7 @@ class BlingShell(cmd.Cmd):
             print(u)
 
     def do_capture(self, arg: str) -> None:
-        """capture start | capture save <dir> — record a HAR for every page you visit.
+        """capture start | capture count | capture save <dir> — record a HAR for every page.
 
         `capture start` arms an instrumented Firefox; from then on every page you load — by
         `navigate`, or by clicking through with `click`/`key` — writes its own HAR, and it keeps
@@ -575,8 +769,10 @@ class BlingShell(cmd.Cmd):
             ui.success(f"saved {len(hars)} HAR(s) to {out_dir}")
             for line in manifest:
                 ui.info(line)
+        elif sub == "count":
+            print(capture_count(self._need_session()))
         else:
-            print("usage: capture start | capture save <dir>")
+            print("usage: capture start | capture count | capture save <dir>")
 
     def _save_captures(self, hars: list, out_dir: Path) -> list[str]:
         """Write each captured HAR named `NN-<host>-<proxy>.har`, tagging by the proxy that was
@@ -755,7 +951,10 @@ class BlingShell(cmd.Cmd):
 
 
 def run_shell(
-    *, record: str | None = None, play: str | None = None, headless: bool = False,
+    *,
+    record: str | None = None,
+    play: str | None = None,
+    headless: bool = False,
     exit_after_play: bool = False,
 ) -> int:
     """Run a BlingShell: optionally replay a file first, then drop to the interactive prompt.
@@ -774,6 +973,27 @@ def run_shell(
         ui.banner(__version__, record)
         sh.cmdloop()
         ui.info("session closed.")
+        return 0
+    finally:
+        sh._shutdown()
+
+
+def run_lines(lines: list[str], *, headless: bool = True) -> int:
+    """Run shell command lines in one session, in order, with no prompt: ``bling do``.
+
+    Stops at the first line that fails. Returns 0 if every line ran, else 1. The session is
+    always closed at the end.
+
+    >>> run_lines(["open example.com", "screenshot page.png --remote-only"])   # doctest: +SKIP
+    0
+    """
+    sh = BlingShell(headless=headless)
+    try:
+        for i, line in enumerate(lines, 1):
+            sh.onecmd(line)
+            if sh._error is not None:
+                ui.info(f"stopped at command {i}: {line}")
+                return 1
         return 0
     finally:
         sh._shutdown()

@@ -121,8 +121,15 @@ bling> screenshot germany.png --remote-only
 bling> quit
 ```
 
-`first.bling` now holds those lines. Replay them unattended with `bling play first.bling`.
-Every shell command is in [SHELL.md](SHELL.md).
+`first.bling` now holds those lines. Replay them unattended with `bling play first.bling`,
+or skip the file and pass commands straight in:
+
+```bash
+bling do "open example.com" "proxy residential germany" "dismiss" "screenshot germany.png --remote-only"
+```
+
+The shell has a command for everything the Python API does. They are all in
+[SHELL.md](SHELL.md).
 
 ## Three things to know before you go further
 

@@ -189,9 +189,14 @@ def test_har_captures_and_saves(tmp_path, monkeypatch, shell_with_fake):
     from bling.har import HAR
 
     fake = HAR(
-        {"log": {"creator": {"name": "Firefox"}, "entries": [
-            {"request": {"url": "https://evil.example/"}, "response": {"status": 200}},
-        ]}},
+        {
+            "log": {
+                "creator": {"name": "Firefox"},
+                "entries": [
+                    {"request": {"url": "https://evil.example/"}, "response": {"status": 200}},
+                ],
+            }
+        },
         "evil.example",
     )
     captured = {}
@@ -216,8 +221,12 @@ def test_capture_records_pages_tagged_by_proxy(tmp_path, monkeypatch, shell_with
 
     def mk(u):
         return HAR(
-            {"log": {"creator": {"name": "Firefox"},
-                     "entries": [{"request": {"url": u}, "response": {"status": 200}}]}},
+            {
+                "log": {
+                    "creator": {"name": "Firefox"},
+                    "entries": [{"request": {"url": u}, "response": {"status": 200}}],
+                }
+            },
             u,
         )
 
@@ -254,10 +263,15 @@ def test_urls_reads_har_from_disk(tmp_path, capsys):
     from bling.har import HAR
 
     h = HAR(
-        {"log": {"creator": {"name": "Firefox"}, "entries": [
-            {"request": {"url": "https://a.example/"}, "response": {"status": 200}},
-            {"request": {"url": "https://b.example/x.js"}, "response": {"status": 404}},
-        ]}},
+        {
+            "log": {
+                "creator": {"name": "Firefox"},
+                "entries": [
+                    {"request": {"url": "https://a.example/"}, "response": {"status": 200}},
+                    {"request": {"url": "https://b.example/x.js"}, "response": {"status": 404}},
+                ],
+            }
+        },
         "a.example",
     )
     path = h.save(tmp_path / "x.har")
@@ -270,13 +284,7 @@ def test_urls_reads_har_from_disk(tmp_path, capsys):
 # --- playback (do_play) -------------------------------------------------------
 def test_playback_skips_comments_and_blanks(tmp_path, shell_with_fake):
     rec = tmp_path / "s.bling"
-    rec.write_text(
-        "# a comment\n"
-        "\n"
-        "focus\n"
-        "   # indented comment\n"
-        "key Tab\n"
-    )
+    rec.write_text("# a comment\n\nfocus\n   # indented comment\nkey Tab\n")
     sh = shell_with_fake
     sh.do_play(str(rec))
     assert sh._session.calls == [("focus",), ("key", "Tab")]
@@ -337,6 +345,13 @@ class PanelSession(FakeSession):
         super().__init__()
         self.calls = []
 
+    def wait_ready(self, **kw):
+        self.calls.append(("wait_ready", (), kw))
+        return "ready"
+
+    def set_proxy(self, kind, **kw):
+        self.calls.append(("set_proxy", (kind,), kw))
+
     def __getattr__(self, name):
         answers = {
             "browsers": {"Chrome": ["156", "155"], "Firefox": ["159"]},
@@ -349,6 +364,8 @@ class PanelSession(FakeSession):
             "get_clipboard": "remote text",
             "proxy_status": {"kind": "Not using proxy", "status": "Not using proxy | 1.2.3.4"},
             "tunnel_stats": {"open": False, "status": "", "requests": 0, "in": "0 B", "out": "0 B"},
+            "transfer_token": ("s1.browserling.com", "dltoken"),
+            "upload_token": ("s1.browserling.com", "ultoken"),
             "set_browser": "ready",
             "set_os": "ready",
             "set_device": "ready",
@@ -426,3 +443,146 @@ def test_type_env_reads_a_dotenv_file(tmp_path, monkeypatch, shell_with_fake):
     assert sh._error is None
     assert ("type", "from-the-file") in sh._session.calls
     monkeypatch.delenv(var, raising=False)
+
+
+# --- the shell covers the whole API ---------------------------------------------
+# Every public Session method, and the shell line that reaches it. A new Session method
+# with no line here fails test_every_session_method_has_a_shell_verb.
+API_TO_SHELL = {
+    "start": "open example.com",  # the first `open` starts the browser
+    "close": "quit",
+    "is_logged_in": "login status",
+    "require_login": "open example.com",  # checked on the first `open`
+    "open": "open example.com --os win11 --browser firefox --timeout 90",
+    "wait_ready": "ready 60",
+    "end": "end",
+    "navigate": "navigate example.org --via remote",
+    "platforms": "os",
+    "browsers": "browser",
+    "set_browser": "browser Firefox 140",
+    "set_os": 'os "Windows 11"',
+    "set_resolution": "resolution 1280x1024",
+    "set_scale": "scale 40",
+    "screenshot": "screenshot a.png --remote-only",
+    "dismiss": "dismiss",
+    "set_proxy": "proxy custom proxy.example.org:1080 --protocol HTTP --user me",
+    "proxy_status": "proxy status",
+    "own_ip_tunnel": "tunnel own-ip",
+    "open_tunnel": "tunnel open localhost:8080",
+    "tunnel_stats": "tunnel stats",
+    "close_tunnel": "tunnel close",
+    "upload": "upload tool.py",
+    "upload_text": "write note.txt some text",
+    "upload_bytes": "upload tool.bin",  # `upload` sends the file's bytes
+    "download": "download out.txt out.txt",
+    "download_when_ready": "download out.txt out.txt --wait 30",
+    "remove": "remove a.txt b.txt",
+    "transfer_token": "token download",
+    "upload_token": "token upload",
+    "run": "run --timeout 120 whoami",
+    "run_script": "script job.bat job.done --timeout 300",
+    "apps": "app",
+    "launch_app": "app PowerShell",
+    "focus_vm": "focus",
+    "key": "key Enter",
+    "type": "type hello",
+    "canvas_click": "click 10 20 --double",
+    "set_clipboard": "clipboard set hello",
+    "get_clipboard": "clipboard get",
+    "share": "share Analyst",
+    "stop_sharing": "share stop",
+    "devices": "device",
+    "set_device": "device iPhone 15",
+    "set_orientation": "rotate 90",
+    "press_button": "button home",
+    "show_devtools": "devtools",
+}
+STATE_READS = {"platform", "is_mac"}  # properties, shown by `status`
+
+
+def test_every_session_method_has_a_shell_verb():
+    import inspect
+
+    from bling.session import Session
+
+    public = {n for n, _ in inspect.getmembers(Session) if not n.startswith("_")}
+    missing = public - set(API_TO_SHELL) - STATE_READS
+    assert not missing, f"no shell command reaches Session.{sorted(missing)}; add one"
+    for line in API_TO_SHELL.values():
+        assert hasattr(BlingShell, "do_" + line.split()[0]), line
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        ("dismiss", ("dismiss", (), {})),
+        ("ready 60", ("wait_ready", (), {"timeout": 60})),
+        ("remove a.txt b.txt", ("remove", ("a.txt", "b.txt"), {})),
+        ("write note.txt some text", ("upload_text", ("some text\n", "note.txt"), {})),
+        ("script job.bat job.done", ("run_script", ("job.bat",), {"sentinel": "job.done"})),
+        (
+            "script job.bat job.done --timeout 300",
+            ("run_script", ("job.bat",), {"sentinel": "job.done", "timeout": 300}),
+        ),
+        ("run --timeout 120 whoami /all", ("run", ("whoami /all",), {"timeout": 120})),
+        ("run whoami", ("run", ("whoami",), {})),
+        (
+            "download out.txt local.txt --wait 30",
+            ("download_when_ready", ("out.txt", "local.txt"), {"timeout": 30}),
+        ),
+        ("click 10 20 --double", ("canvas_click", (10, 20), {"clicks": 2})),
+        ("token download", ("transfer_token", (), {})),
+        ("token upload", ("upload_token", (), {})),
+        (
+            "open example.com --os ios18 --timeout 120",
+            ("open", ("example.com",), {"os": "ios18", "ready_timeout": 120}),
+        ),
+    ],
+)
+def test_api_parity_verbs_call_the_session(line, expected):
+    sh = BlingShell()
+    sh._session = PanelSession()
+    sh.onecmd(line)
+    assert sh._error is None
+    assert expected in sh._session.calls
+
+
+def test_proxy_custom_takes_its_password_from_the_environment(monkeypatch):
+    monkeypatch.setenv("BLING_TEST_PROXY_WORD", "from-env")
+    sh = BlingShell()
+    sh._session = PanelSession()
+    sh.onecmd(
+        "proxy custom proxy.example.org:1080 --protocol HTTP --user me "
+        "--password-env BLING_TEST_PROXY_WORD"
+    )
+    assert sh._error is None
+    kwargs = next(c[2] for c in sh._session.calls if c[0] == "set_proxy")
+    assert kwargs == {
+        "address": "proxy.example.org:1080",
+        "username": "me",
+        "password": "from-env",
+        "protocol": "HTTP",
+    }
+
+
+def test_bad_seconds_are_refused():
+    sh = BlingShell()
+    sh._session = PanelSession()
+    sh.onecmd("ready soon")
+    assert "whole number of seconds" in str(sh._error)
+
+
+def test_run_lines_stops_at_the_first_failure(monkeypatch):
+    from bling import shell
+
+    seen = []
+
+    class Stub(BlingShell):
+        def onecmd(self, line):
+            seen.append(line)
+            self._error = RuntimeError("boom") if line == "bad" else None
+
+    monkeypatch.setattr(shell, "BlingShell", Stub)
+    assert shell.run_lines(["one", "two"]) == 0
+    assert shell.run_lines(["one", "bad", "never"]) == 1
+    assert seen == ["one", "two", "one", "bad"]
