@@ -451,7 +451,7 @@ class Session:
         """Set the remote screen size, e.g. ``"1920x1080"``.
 
         A size the list offers is clicked; any other size from 100 to 4096 a side goes
-        through "Custom..." where the OS has it (Windows 7 and later). The window stays
+        through "Custom..." where the OS has it (Windows 10 and 11). The window stays
         open over the page afterwards: call ``dismiss()`` before a screenshot.
 
         >>> s.set_resolution("1280x1024")
@@ -846,6 +846,11 @@ class Session:
         return self.upload_bytes(text.encode("utf-8"), remote_name)
 
     def upload_bytes(self, data: bytes, remote_name: str) -> str:
+        """Write raw bytes as a file in the VM's Downloads. Returns its name.
+
+        >>> s.upload_bytes(bytes([0, 1, 2]), "blob.bin")
+        'blob.bin'
+        """
         server, token = self.upload_token()
         try:
             r = requests.put(f"https://{server}/{token}/{remote_name}", data=data, timeout=60)

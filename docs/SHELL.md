@@ -1,7 +1,8 @@
 # bling shell: interactive REPL with record + replay
 
-**See also:** [README](../README.md) to get started · [`API.md`](API.md) for the Python
-`Session` API and the rest of the non-interactive `bling` CLI (`har`, `urls`, `open`, `run`, `play`).
+**See also:** [Quickstart](QUICKSTART.md) to get started · [API.md](API.md) for the Python
+`Session` API · [CLI.md](CLI.md) for the non-interactive commands (`har`, `urls`, `open`,
+`run`, `play`) · [Troubleshooting](TROUBLESHOOTING.md).
 
 `bling shell` is an interactive prompt for driving one Browserling session by hand, like
 `ipython` for bling. You type verbs one at a time (`open`, `proxy`, `navigate`, `type`,
@@ -24,22 +25,36 @@ Each verb wraps one `Session` method; defaults match the Session defaults.
 | Command | What it does |
 |---|---|
 | `login` | Solve the one-time CAPTCHA login (needed before `open` if the cookie has expired). Opens a headed window; must run before any session is open. |
-| `open <url> [--os win10] [--browser chrome138]` | Open a session and wait until the canvas is ready. Creates the browser (and checks login) on first use. |
+| `open <url> [--os win10] [--browser chrome138]` | Open a session on a fresh machine and wait until the canvas is ready. Creates the browser (and checks login) on first use. `--os` takes a slug (`win11`, `mac15`, `ios18`) or a quoted name (`"Windows 11"`). |
 | `navigate <url> [--via panel\|remote]` | Load a new URL via the control panel (default) or the remote browser's own address bar. |
+| `browser [name] [version]` | Switch browser **on the same machine**, keeping its files and proxy: `browser Firefox`, `browser Chrome 120`. With no name, list the browsers this OS offers. |
+| `os [name] [--browser b]` | Move to another OS at the current address: `os "Windows 11"`, `os mac15 --browser firefox`. A **new machine** starts, so files and the proxy are gone. With no name, list every OS. |
 | `proxy <kind> [country]` | Route through a proxy/VPN (`datacenter`/`residential`/`mobile`/`tor`), then wait ready. |
-| `resolution <WxH>` | Set the remote screen resolution, e.g. `resolution 1920x1080`. |
+| `proxy status` | Print the exit address the session is using now. |
+| `resolution <WxH>` | Set the remote screen size, e.g. `resolution 1920x1080`; a size not on the list is set as a custom size. |
+| `scale <0-100>` | Magnify the remote screen inside the page; `scale 0` fits it again. |
 | `focus` | Give the VM keyboard focus so OS shortcuts (Win+R) forward into it. |
 | `key <combo>` | Press a key/chord, e.g. `key Tab`, `key Control+A`. |
 | `type <text>` | Type literal text into the VM. **Recorded in plaintext; never use for secrets.** |
 | `type_env <ENVVAR>` | Type the *value* of an env var; records only the variable name (see Secrets). |
 | `click <x> <y>` | Click a pixel in the remote view. |
+| `clipboard get` / `clipboard set <text>` | Read or set the remote machine's clipboard. `set` is **recorded in plaintext**; paste with `key Control+V`. |
 | `run <command>` | Run a shell command in the VM and print its output. |
+| `app [name]` | Open an app from Launch apps: `app PowerShell`, `app Terminal`. With no name, list them. |
 | `upload <local> [remote_name]` | Push a local file into the VM's Downloads. |
 | `download <remote> <out>` | Pull a file out of the VM to the local machine. |
-| `screenshot [path]` | Save a PNG of the session (default `shot.png`). |
+| `screenshot [path] [--remote-only]` | Save a PNG of the session (default `shot.png`). `--remote-only` leaves out the session menu and any Browserling window. |
 | `har <url> [out.har]` | Capture the URL's HAR with a fresh Firefox in this session (replaces the current view). Saves `<host>.har` and shows a summary. |
 | `urls <file.har>` | Print every URL a `.har` file requested, one per line (local read, no VM). |
 | `capture start` / `capture save <dir>` | Record a HAR for **every** page you visit, across proxy switches, for malware you must click through to reach. `start` arms it; drive with `navigate`/`click`; `save` downloads them all, tagged by order, host, and active proxy. |
+| `share [name] [--view-only]` / `share stop` | Start co-browsing and print the invite link; `share stop` kills the link and removes guests. Anyone with the link can join. |
+| `tunnel open <address> [ssh\|old-ssh\|putty]` | Open a Local Testing tunnel and print the SSH command to run on the machine that can reach `<address>`. |
+| `tunnel stats` / `tunnel close` | Show the tunnel's status and traffic; close it. |
+| `tunnel own-ip` | Print the SSH command that routes the whole session through your own connection. |
+| `device [model]` | iOS: restart as another model, `device iPhone 15`. With no model, list them. |
+| `rotate <0\|90\|180\|270>` | iOS: rotate the device. |
+| `button <name>` | iOS: press `home`, `action`, `mute`, `volume_down`, `volume_up` or `lock`. |
+| `devtools` | iOS: open Safari's Web Inspector for the page. |
 | `wait <seconds>` | Sleep, an explicit pause you can put in a recording for playback. |
 | `end` | End the Browserling VM. The shell stays open; `open <url>` starts a fresh one. |
 | `record on <file>` / `record off` | Toggle recording mid-session. |
@@ -49,12 +64,12 @@ Each verb wraps one `Session` method; defaults match the Session defaults.
 
 ## Worked example: record a login
 
-Put the credentials in the environment first (bling reads them from `keys.env`/`.env` up the
-tree, or you can `setx` them). Then record:
+Put the credentials in the environment first, or in a `.env` or `keys.env` file in the
+current folder or above it; `type_env` reads all three. Then record:
 
 ```
 $ bling shell --record login.bling
-bling 0.1.0 - interactive Browserling driver
+bling 0.2.0 - interactive Browserling driver
 type `help` to list commands, `help <cmd>` for usage, `quit` to exit
 (recording -> login.bling)
 
@@ -124,6 +139,43 @@ the remote browser is different: bling sees it only as streamed video, so there 
 
 Pixel `click` coordinates are brittle across screen sizes, so set a known one with
 `resolution 1920x1080` first if you are scripting clicks.
+
+## Switching browser and operating system
+
+`browser` and `os` look alike and are not. A browser switch keeps the machine; an OS switch
+replaces it.
+
+```
+open example.com
+upload notes.txt
+proxy residential germany
+browser Firefox              # same machine: notes.txt and the German exit are still there
+browser Chrome 100           # any version the menu lists, however old
+os "Windows 11"              # new machine: no notes.txt, no proxy
+os                           # list every OS Browserling offers
+```
+
+`open` also replaces the machine. Use `navigate` to change the page and `browser` to change
+the browser when you want to keep what you have set up.
+
+## Reaching a server on your own machine
+
+`tunnel open` prints an SSH command. Run it in another terminal, on the machine that can
+reach the address, and leave it running:
+
+```
+bling> tunnel open localhost:8080
+ssh -R 2 <id>:<secret>@tunnel.browserling.com
+bling> tunnel stats
+Waiting for connection...: 0 requests, 0 B in, 0 B out
+bling> navigate localhost:8080          # after the ssh command connects
+bling> tunnel stats
+Connected!: 2 requests, 1.6 KB in, 761 B out
+bling> tunnel close
+```
+
+The printed command holds a per-session secret, and it is printed, not recorded: a `.bling`
+file holds only `tunnel open localhost:8080`. The same goes for the link `share` prints.
 
 ## Comparing a page across countries (cloaking)
 
@@ -205,7 +257,8 @@ The recording is meant to be shareable, so **plaintext passwords must never land
 
 ## Errors
 
-Every `BlingError` is caught at the dispatch level and printed as `error: <msg>`. Interactively
+Every `BlingError` is caught at the dispatch level and shown in a red panel titled "error",
+on standard error. Interactively
 you just recover at the prompt; during `play` the run aborts at the first failing line and
 reports where it stopped. For example, `run` surfaces its own guidance when a command is too
 long or contains double-quotes (Win+R can't route it) instead of failing silently. On a Mac

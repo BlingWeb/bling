@@ -30,7 +30,7 @@ This standard is short on purpose. If a rule needs a paragraph to justify, it's 
 - **Structured, serializable returns.** Prefer plain data (dict/list/str) or thin wrappers over
   it. An agent should be able to `.save()` or inspect results without guessing.
 - **Errors tell you how to fix them.** Messages are actionable, not just descriptive:
-  `"Not logged in — run: bling login"`, not `"auth error"`. A typed hierarchy lets callers
+  `"Not logged in — run once: bling login"`, not `"auth error"`. A typed hierarchy lets callers
   branch (`NotLoggedIn`, `SessionBlocked`, `Timeout`, `EgressError`).
 - **Fail fast and loud.** Surface failures immediately (Zen: errors never pass silently). No
   silent retries that hide a broken state.

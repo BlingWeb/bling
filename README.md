@@ -13,8 +13,9 @@ That automation matters because hostile pages fight back. A malware page will bo
 through a chain of redirects and **cloak** itself based on who's asking: it serves the real
 payload only to the right country, operating system, or a residential (rather than datacenter)
 IP, and a harmless decoy to everyone else. bling lets you switch proxy exits (datacenter,
-residential, mobile, Tor) and swap the OS or browser between runs, so you can see what the page
-shows each kind of visitor.
+residential, mobile, Tor), swap the browser on a running machine and move to another OS
+(Windows XP to 11, macOS, iOS, Android), so you can see what the page shows each kind of
+visitor.
 
 To capture what a page actually did, bling produces a **HAR file** (HTTP Archive), a JSON log
 of every network request the page made: each redirect, script, and API call, with headers and
@@ -23,10 +24,10 @@ could detect, so the log is faithful and you analyse it offline.
 
 > **Scope:** HAR capture runs in a **Firefox-on-Windows** VM, because bling drives Firefox's own
 > built-in network monitor. The VM shell and file transfer work on Windows VMs (through Win+R)
-> and on **macOS** VMs (through Terminal, `open(..., os="mac", browser="safari")`); see
-> [API.md](docs/API.md). You can still *open* a page in other browsers or OSes to compare what
-> renders (see the [browser/OS cloaking example](examples/env_cloaking.py)), but the network
-> capture itself is Firefox-on-Windows.
+> and on **macOS** VMs (through Terminal, `open(..., os="mac15", browser="safari")`). You can
+> still *open* a page in any browser or OS, phones included, to compare what renders (see the
+> [browser/OS cloaking example](examples/env_cloaking.py)), but the network capture itself is
+> Firefox-on-Windows. [What works where](docs/ENVIRONMENTS.md#what-works-where) has the table.
 
 Built to be obvious for humans and for AI agents. See [`CODING_STANDARD.md`](CODING_STANDARD.md).
 
@@ -117,8 +118,19 @@ with bling.Session() as s:           # always a context manager
     s.run("python C:/Users/user/Downloads/tool.py")
     s.download("result.json", "result.json")
     s.set_proxy("datacenter", country="germany")   # matched case-insensitively
-    s.screenshot("shot.png")
+    s.wait_ready(); s.dismiss()      # the stream restarts; the proxy window stays open
+    s.screenshot("shot.png", remote_only=True)     # the remote screen, no Browserling menu
+
+    s.set_browser("Firefox")         # same machine: files and proxy are kept
+    s.set_os("Windows 11")           # new machine, same address
+    s.set_clipboard("pasted text"); s.key("Control+V")
+    link = s.share("Analyst", view_only=True)      # co-browsing invite link
+    cmd = s.open_tunnel("localhost:8080")          # SSH command that lets the VM reach your server
 ```
+
+Everything a session can do, with every parameter and error, is in
+[docs/API.md](docs/API.md): proxies, screen size, files, remote commands, apps, clipboard,
+co-browsing, local-testing tunnels and the iPhone controls.
 
 To see a page the way another country does, and spot **geo-cloaked** malware that serves
 different content by region, capture it through a proxy and diff the results:
@@ -140,10 +152,21 @@ records only its name. Full command reference in [`docs/SHELL.md`](docs/SHELL.md
 
 ## Docs & examples
 
-- **[`docs/API.md`](docs/API.md)**: the full Python API on one page, plus the **`bling`
-  command-line reference** (`bling har`, `urls`, `open`, `run`, `shell`, `play`).
-- **[`docs/SHELL.md`](docs/SHELL.md)**: the interactive **`bling shell`** for driving a session
-  by hand, and recording a run to a replayable `.bling` script.
+The full set is indexed in **[docs/](docs/README.md)**:
+
+- **[Quickstart](docs/QUICKSTART.md)**: install to first session in ten minutes.
+- **[API reference](docs/API.md)**: every function and method, with its parameters, return
+  value, errors and an example.
+- **[Advanced usage](docs/ADVANCED.md)**: choosing a proxy, popups, readable screenshots,
+  Mac and iPhone sessions, tunnels, sharing, parallel runs, secrets.
+- **[Command line](docs/CLI.md)**: `bling har`, `urls`, `open`, `run`, `shell`, `play`, with
+  flags and exit codes.
+- **[`bling shell`](docs/SHELL.md)**: driving a session by hand and recording it to a
+  replayable `.bling` script.
+- **[Environments](docs/ENVIRONMENTS.md)**: every OS and browser, and what works on each.
+- **[Errors](docs/ERRORS.md)** and **[Troubleshooting](docs/TROUBLESHOOTING.md)**: every
+  message with its fix; symptoms with their causes.
+- **[Changelog](CHANGELOG.md)** and **[Contributing](CONTRIBUTING.md)**.
 - **[`examples/`](examples/README.md)**: seven runnable walkthroughs, from the
   [quickstart](examples/quickstart.py) and HAR [URL triage](examples/url_triage.py) to
   [geo-](examples/geo_cloaking.py) and [browser/OS](examples/env_cloaking.py) cloaking,
@@ -155,7 +178,8 @@ records only its name. Full command reference in [`docs/SHELL.md`](docs/SHELL.md
 
 All errors subclass `bling.BlingError`; catch a specific one to branch:
 `NotLoggedIn`, `SessionBlocked`, `NotReady`, `Timeout`, `EgressError`. Messages tell you how
-to fix them (e.g. *"Not logged in — run: bling login"*).
+to fix them (e.g. *"Not logged in — run once: bling login"*). Every message is listed with
+its cause and fix in [docs/ERRORS.md](docs/ERRORS.md).
 
 ## Security
 
