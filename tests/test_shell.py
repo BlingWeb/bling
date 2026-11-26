@@ -383,6 +383,8 @@ class PanelSession(FakeSession):
     [
         ("browser Firefox", ("set_browser", ("Firefox", None), {})),
         ("browser Chrome 120", ("set_browser", ("Chrome", "120"), {})),
+        ("browser Tor Browser 16", ("set_browser", ("Tor Browser", "16"), {})),
+        ("browser Internet Explorer", ("set_browser", ("Internet Explorer", None), {})),
         ('os "Windows 11"', ("set_os", ("Windows 11",), {"browser": None})),
         ("os mac15 --browser firefox", ("set_os", ("mac15",), {"browser": "firefox"})),
         ("scale 40", ("set_scale", (40,), {})),
@@ -586,3 +588,22 @@ def test_run_lines_stops_at_the_first_failure(monkeypatch):
     assert shell.run_lines(["one", "two"]) == 0
     assert shell.run_lines(["one", "bad", "never"]) == 1
     assert seen == ["one", "two", "one", "bad"]
+
+
+def test_login_status_with_a_session_open_reports_instead_of_refusing(capsys):
+    sh = BlingShell()
+    sh._session = PanelSession()
+    sh.onecmd("login status")
+    assert sh._error is None
+    assert "logged in" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("line", ["open other.example", 'os "Windows 11"'])
+def test_a_new_machine_forgets_the_old_proxy_label_and_capture(line):
+    sh = BlingShell()
+    sh._session = PanelSession()
+    sh._proxy_label = "residential-germany"
+    sh._cap = {"bounds": [(0, "residential-germany")]}
+    sh.onecmd(line)
+    assert sh._error is None
+    assert (sh._proxy_label, sh._cap) == ("noproxy", None)

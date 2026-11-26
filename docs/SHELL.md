@@ -33,12 +33,12 @@ Each verb wraps one `Session` method; defaults match the Session defaults. **Eve
 
 | Command | What it does |
 |---|---|
-| `login` / `login status` | Solve the one-time CAPTCHA login (needed before `open` if the cookie has expired). Opens a headed window; must run before any session is open. `login status` only reports whether you are signed in. |
+| `login` / `login status` | Solve the one-time CAPTCHA login (needed before `open` if the cookie has expired). Opens a headed window; must run before any session is open. `login status` only reports whether you are signed in, at any time. |
 | `open <url> [--os win10] [--browser chrome138] [--timeout 45]` | Open a session on a fresh machine and wait until the canvas is ready. Creates the browser (and checks login) on first use. `--os` takes a slug (`win11`, `mac15`, `ios18`) or a quoted name (`"Windows 11"`). `--timeout` is the seconds to wait; give phones and Macs 120. |
 | `ready [seconds]` | Wait until the remote screen is streaming (default 45). |
 | `status` | Show the session's OS, browser, address and proxy. |
 | `navigate <url> [--via panel\|remote]` | Load a new URL via the control panel (default) or the remote browser's own address bar. |
-| `browser [name] [version]` | Switch browser **on the same machine**, keeping its files and proxy: `browser Firefox`, `browser Chrome 120`. With no name, list the browsers this OS offers. |
+| `browser [name] [version]` | Switch browser **on the same machine**, keeping its files and proxy: `browser Firefox`, `browser Chrome 120`, `browser Tor Browser 16` (a last word starting with a digit is the version). With no name, list the browsers this OS offers. |
 | `os [name] [--browser b]` | Move to another OS at the current address: `os "Windows 11"`, `os mac15 --browser firefox`. A **new machine** starts, so files and the proxy are gone. With no name, list every OS. |
 | `proxy <kind> [country]` | Route through a proxy/VPN (`datacenter`/`residential`/`mobile`/`tor`), then wait ready. |
 | `proxy custom <host:port> [--protocol SOCKS5\|SOCKS4\|HTTP] [--user NAME] [--password-env ENVVAR]` | Route through your own proxy. The password is read from an environment variable (or `.env`), so it never lands in a recording. |
@@ -173,7 +173,8 @@ os                           # list every OS Browserling offers
 ```
 
 `open` also replaces the machine. Use `navigate` to change the page and `browser` to change
-the browser when you want to keep what you have set up.
+the browser when you want to keep what you have set up. A new machine has no proxy and no
+armed `capture`, and the shell forgets both.
 
 ## Reaching a server on your own machine
 

@@ -66,6 +66,8 @@ against live sessions on the release date (`tests/test_live_panel.py`).
   `is_logged_in()` escaped as Playwright errors. They are now `BlingError`, as the docs
   always said.
 - `set_proxy()` can leave the "Your Own IP" screen, which has a different button layout.
+- Shell: after `open`, saved captures were still labelled with the previous machine's
+  proxy, and capture mode stayed armed on a machine that had no capture running.
 - Docs: the error display, the login message, the dependency list and the `--proxy`
   choices matched the code only loosely; the reference is now written from the code.
 

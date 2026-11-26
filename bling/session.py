@@ -45,6 +45,18 @@ def _parse_curl_token(text: str) -> tuple[str, str] | None:
     return (m.group(1), m.group(2)) if m else None
 
 
+def _count(text: str | None) -> int | str:
+    """A counter as the page prints it: an int when it is plain digits (thousands commas
+    allowed), otherwise the text unchanged, e.g. an abbreviated ``"1.2K"``.
+
+    >>> _count("0"), _count("1,204"), _count("1.2K"), _count(None)
+    (0, 1204, '1.2K', 0)
+    """
+    text = (text or "0").strip()
+    digits = text.replace(",", "")
+    return int(digits) if digits.isdigit() else text
+
+
 # A bare filename in the VM's Downloads: no path, quotes, wildcards or shell metacharacters,
 # because it is typed into a Win+R command line and put into an egress URL.
 _VM_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
@@ -491,7 +503,11 @@ class Session:
         >>> s.set_scale(40)
         >>> s.set_scale(0)
         """
-        if not 0 <= int(percent) <= 100:
+        try:
+            in_range = 0 <= int(percent) <= 100
+        except (TypeError, ValueError):
+            in_range = False
+        if not in_range:
             raise BlingError(f"set_scale({percent!r}): scale runs from 0 to 100")
         item = "ios" if self.platform == "ios" else "display"
         win = self._open_window(item, ".display-settings")
@@ -535,6 +551,8 @@ class Session:
         """
         self._close_popups()
         want_version = None if version is None else str(version)
+        before_url = self.page.url
+        before = self._menu_lists()["browser"].lower()
         with self._step(f"switching the browser to {name}"):
             self.page.locator("#main-menu .field.browser .select-dropdown").click(timeout=4000)
             for _ in range(_BROWSER_EXPANDS + 1):
@@ -551,13 +569,20 @@ class Session:
                     raise BlingError(f"no browser {name!r} on {self.os}; offered: {have}")
                 span = f"; its versions run {offered[0]} down to {offered[-1]}" if offered else ""
                 raise BlingError(f"no {name} {version} on {self.os}{span}")
+            want = f"{hit['name']} {hit['version']}".lower()
             self.page.locator("[data-bling-pick]").click(timeout=4000)
             self.page.wait_for_function(
                 "want => document.querySelector('#main-menu .field.browser .select-dropdown "
                 ".select-name').textContent.trim().toLowerCase() === want",
-                arg=f"{hit['name']} {hit['version']}".lower(),
+                arg=want,
                 timeout=30000,
             )
+            if want != before:
+                # The menu's label changes at the click; the session's address changes when
+                # Browserling has actually moved to the new browser. The canvas never goes
+                # away on the same machine, so wait_ready alone would return too early.
+                self.page.wait_for_url(lambda u: u != before_url, timeout=30000)
+                self.page.wait_for_timeout(2000)  # let the new browser's window paint
         return self.wait_ready(ready_timeout)
 
     def set_os(self, os: str, *, browser: str | None = None, ready_timeout: int = 120) -> str:
@@ -1213,9 +1238,13 @@ class Session:
             if screen != "host":
                 pop.locator("#cobrowse-name").fill(name, timeout=4000)
                 pop.locator("#cobrowse-trust-0" if view_only else "#cobrowse-trust-1").check()
+                # Empty the link box first, so a link revoked earlier cannot be read back.
+                self.page.evaluate("() => { document.querySelector('#cobrowse-url').value = ''; }")
                 pop.locator(".btn-create").click(timeout=4000)
             self.page.wait_for_function(
-                "() => (document.querySelector('#cobrowse-url') || {}).value", timeout=15000
+                "() => document.querySelector('#popup-cobrowsing').dataset.screen === 'host'"
+                " && document.querySelector('#cobrowse-url').value",
+                timeout=15000,
             )
             link = pop.locator("#cobrowse-url").input_value()
             pop.locator(".if-host .btn-close").click(timeout=4000)
@@ -1273,13 +1302,21 @@ class Session:
             if win.get_attribute("data-screen") == "run-command":
                 self._tunnel_close_click(win)
             win.locator(".open-tunnel input.user-input").fill(address, timeout=4000)
+            # Empty the command box first: it can still hold the last tunnel's command,
+            # and a wait for "not empty" would hand that stale secret straight back.
+            self.page.evaluate("css => { document.querySelector(css).value = ''; }", box)
             win.locator(".open-tunnel button.primary").click(timeout=4000)
             self.page.wait_for_function(
-                "css => (document.querySelector(css) || {}).value", arg=box, timeout=15000
+                "css => document.querySelector('.tunnels-setup').dataset.screen === 'run-command'"
+                " && document.querySelector(css).value",
+                arg=box,
+                timeout=15000,
             )
-            if client != "ssh":
-                label = config.TUNNEL_CLIENTS[client]
-                win.locator(".run-command .top a", has_text=label).first.click(timeout=4000)
+            # The window remembers the last client chosen, so pick ours every time. The
+            # form on show has no link; the other two do.
+            link = win.locator(".run-command .top a", has_text=config.TUNNEL_CLIENTS[client])
+            if link.count():
+                link.first.click(timeout=4000)
                 self.page.wait_for_timeout(300)
             command = self.page.locator(box).input_value()
         self._close_window(".tunnels-setup")
@@ -1287,7 +1324,8 @@ class Session:
 
     def tunnel_stats(self) -> dict:
         """The Local Testing tunnel's state: whether one is open, its status line, and the
-        traffic it has carried.
+        traffic it has carried. ``requests`` is an int, or the page's own text if it
+        abbreviates a large count.
 
         >>> s.tunnel_stats()["status"]
         'Waiting for connection...'
@@ -1299,7 +1337,7 @@ class Session:
             stats = {
                 "open": is_open,
                 "status": status.strip() if is_open else "",
-                "requests": int(win.locator(".lt-stats-req").text_content() or 0),
+                "requests": _count(win.locator(".lt-stats-req").text_content()),
                 "in": (win.locator(".lt-stats-in").text_content() or "").strip(),
                 "out": (win.locator(".lt-stats-out").text_content() or "").strip(),
             }

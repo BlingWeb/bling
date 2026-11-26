@@ -45,7 +45,7 @@ def test_menu_lists(s):
 def test_set_browser_keeps_the_machine(s):
     token = s.transfer_token()
     assert s.set_browser("Firefox") == "ready"
-    assert "/win10/firefox" in s.page.url
+    assert "/win10/firefox" in s.page.url  # the address has moved by the time it returns
     s._dl_token = None  # read the link again from the page, not from the cache
     assert s.transfer_token() == token
 
@@ -94,6 +94,9 @@ def test_share_and_stop(s):
     assert s.share() == link  # already sharing: the same link comes back
     s.stop_sharing()
     s.stop_sharing()  # nothing shared: a no-op
+    again = s.share("bling-test")
+    assert again.startswith("https://browserling.com/join/") and again != link  # not the dead one
+    s.stop_sharing()
     s.dismiss()
 
 
@@ -102,6 +105,8 @@ def test_tunnel_commands(s):
     cmd = s.open_tunnel("localhost:8080")
     assert cmd.startswith("ssh -R ") and cmd.endswith("@tunnel.browserling.com")
     assert s.open_tunnel("localhost:8081", client="putty").startswith("putty -ssh -R ")
+    moved = s.open_tunnel("localhost:8082")  # the window remembers PuTTY; we asked for ssh
+    assert moved.startswith("ssh -R 2 ") and moved != cmd  # the new form, not a stale secret
     stats = s.tunnel_stats()
     assert stats["open"] is True and stats["requests"] == 0
     s.close_tunnel()

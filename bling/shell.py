@@ -195,6 +195,11 @@ class BlingShell(cmd.Cmd):
             self._session = s
         return self._session
 
+    def _new_machine(self) -> None:
+        """Forget what belonged to the last machine: its proxy and any armed capture."""
+        self._proxy_label = "noproxy"
+        self._cap = None
+
     def _need_session(self) -> Session:
         """Return the live Session, or raise with the fix if `open` hasn't run yet."""
         if self._session is None:
@@ -314,16 +319,19 @@ class BlingShell(cmd.Cmd):
         Opens a headed Chrome window on the shared profile; you solve the CAPTCHA, the cookie
         is saved, and later `open` calls are unattended. Must run before any session is open.
         """
+        if arg.strip() == "status":
+            if self._session is not None:
+                print("logged in")  # the shell only holds a session once the login check passed
+                return
+            with Session(headless=True) as probe:
+                ok = probe.is_logged_in()
+            print("logged in" if ok else "not logged in — run `login`")
+            return
         if self._session is not None:
             raise BlingError(
                 "log in before opening a session — a live session holds the browser profile; "
                 "quit and restart the shell, then `login`"
             )
-        if arg.strip() == "status":
-            with Session(headless=True) as probe:
-                ok = probe.is_logged_in()
-            print("logged in" if ok else "not logged in — run `login`")
-            return
         ui.info("opening a login window — solve the CAPTCHA there, then come back here …")
         login()  # headed Chrome on the shared profile; blocks until solved (or times out)
         ui.success("logged in — the cookie is saved; `open <url>` will work now")
@@ -352,6 +360,7 @@ class BlingShell(cmd.Cmd):
         s = self._ensure_session()
         with ui.status(f"opening {pos[0]} on {os_}/{browser} …"):
             state = s.open(pos[0], **kwargs)
+        self._new_machine()
         ui.success(f"{state}: {pos[0]} on {os_}/{browser}")
 
     def do_ready(self, arg: str) -> None:
@@ -404,9 +413,12 @@ class BlingShell(cmd.Cmd):
             for name, versions in s.browsers().items():
                 print(f"{name}: {', '.join(versions[:6])}{' ...' if len(versions) > 6 else ''}")
             return
-        version = toks[1] if len(toks) > 1 else None
-        with ui.status(f"switching to {' '.join(toks)} …"):
-            state = s.set_browser(toks[0], version)
+        # A last word that starts with a digit is the version; the rest is the name, so
+        # `browser Tor Browser 16` and `browser Internet Explorer` need no quotes.
+        version = toks.pop() if len(toks) > 1 and toks[-1][:1].isdigit() else None
+        with ui.status(f"switching to {' '.join(toks)}{' ' + version if version else ''} …"):
+            state = s.set_browser(" ".join(toks), version)
+        toks = toks + ([version] if version else [])
         ui.success(f"{state}: {' '.join(toks)}")
 
     def do_os(self, arg: str) -> None:
@@ -423,7 +435,7 @@ class BlingShell(cmd.Cmd):
         name = " ".join(pos)
         with ui.status(f"opening a {name} machine …"):
             state = s.set_os(name, browser=opts.get("--browser"))
-        self._proxy_label = "noproxy"  # a new machine starts with no proxy
+        self._new_machine()
         ui.success(f"{state}: {config.os_slug(name)}")
 
     def do_proxy(self, arg: str) -> None:

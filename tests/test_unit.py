@@ -339,6 +339,7 @@ def test_set_os_needs_an_open_session():
         (lambda s: s.navigate("example.com", via="tab"), "'panel' or 'remote'"),
         (lambda s: s.set_resolution("big"), "not a screen size"),
         (lambda s: s.set_scale(140), "0 to 100"),
+        (lambda s: s.set_scale("half"), "0 to 100"),
         (lambda s: s.open_tunnel("localhost:1", client="telnet"), "one of ssh"),
         (lambda s: s.set_orientation(90), "iOS sessions"),
         (lambda s: s.press_button("home"), "iOS sessions"),
@@ -373,3 +374,24 @@ def test_capture_refuses_a_non_windows_os():
 
     with pytest.raises(BlingError, match="Windows"):
         bling.capture(Session(), "example.com", os="mac15")
+
+
+def test_capture_refuses_an_unknown_os_with_a_bling_error():
+    import bling
+    from bling.session import Session
+
+    with pytest.raises(BlingError, match="not an OS slug"):
+        bling.capture(Session(), "example.com", os="linux")
+
+
+def test_count_reads_counters_as_the_page_prints_them():
+    from bling.session import _count
+
+    assert [_count(x) for x in ("0", " 12 ", "1,204", "1.2K", None, "")] == [
+        0,
+        12,
+        1204,
+        "1.2K",
+        0,
+        0,
+    ]

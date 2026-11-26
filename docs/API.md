@@ -603,7 +603,9 @@ ssh.terminate()
 s.tunnel_stats() -> dict
 ```
 
-**Returns** `{"open": bool, "status": str, "requests": int, "in": str, "out": str}`.
+**Returns** `{"open": bool, "status": str, "requests": int, "in": str, "out": str}`
+(`requests` is the page's own text instead, such as `"1.2K"`, if Browserling abbreviates a
+large count).
 `status` reads `"Waiting for connection..."` until your command connects, then
 `"Waiting for server..."` and `"Connected!"`. `in` and `out` are sizes as Browserling
 prints them (`"1.6 KB"`).
