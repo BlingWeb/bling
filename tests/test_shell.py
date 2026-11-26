@@ -327,3 +327,102 @@ def test_record_then_replay_roundtrip(tmp_path):
     rec.write_text("open example.com\nscreenshot " + str(tmp_path / "shot.png") + "\n")
     assert run_shell(play=str(rec), headless=True, exit_after_play=True) == 0
     assert (tmp_path / "shot.png").exists()
+
+
+# --- session-menu verbs (browser, os, clipboard, share, tunnel, iOS) ------------
+class PanelSession(FakeSession):
+    """Records each Session call the new verbs make, and answers with canned values."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def __getattr__(self, name):
+        answers = {
+            "browsers": {"Chrome": ["156", "155"], "Firefox": ["159"]},
+            "platforms": ["Windows 11", "iOS 18"],
+            "apps": ["Explorer", "PowerShell"],
+            "devices": ["iPhone 15"],
+            "share": "https://browserling.com/join/abc",
+            "open_tunnel": "ssh -R 2 id:secret@tunnel.browserling.com",
+            "own_ip_tunnel": "ssh -R 2 id:secret@tunnel.browserling.com",
+            "get_clipboard": "remote text",
+            "proxy_status": {"kind": "Not using proxy", "status": "Not using proxy | 1.2.3.4"},
+            "tunnel_stats": {"open": False, "status": "", "requests": 0, "in": "0 B", "out": "0 B"},
+            "set_browser": "ready",
+            "set_os": "ready",
+            "set_device": "ready",
+        }
+
+        def call(*args, **kwargs):
+            self.calls.append((name, args, kwargs))
+            return answers.get(name)
+
+        return call
+
+
+@pytest.mark.parametrize(
+    "line, expected",
+    [
+        ("browser Firefox", ("set_browser", ("Firefox", None), {})),
+        ("browser Chrome 120", ("set_browser", ("Chrome", "120"), {})),
+        ('os "Windows 11"', ("set_os", ("Windows 11",), {"browser": None})),
+        ("os mac15 --browser firefox", ("set_os", ("mac15",), {"browser": "firefox"})),
+        ("scale 40", ("set_scale", (40,), {})),
+        ("clipboard set two words", ("set_clipboard", ("two words",), {})),
+        ("app PowerShell", ("launch_app", ("PowerShell",), {})),
+        ("share Analyst --view-only", ("share", ("Analyst",), {"view_only": True})),
+        ("share stop", ("stop_sharing", (), {})),
+        (
+            "tunnel open localhost:8080 putty",
+            ("open_tunnel", ("localhost:8080",), {"client": "putty"}),
+        ),
+        ("tunnel close", ("close_tunnel", (), {})),
+        ("tunnel own-ip", ("own_ip_tunnel", (), {})),
+        ("device iPhone 15", ("set_device", ("iPhone 15",), {})),
+        ("rotate 90", ("set_orientation", (90,), {})),
+        ("button home", ("press_button", ("home",), {})),
+        ("devtools", ("show_devtools", (), {})),
+        ("screenshot a.png --remote-only", ("screenshot", ("a.png",), {"remote_only": True})),
+        ("proxy status", ("proxy_status", (), {})),
+    ],
+)
+def test_panel_verbs_call_the_session(line, expected):
+    sh = BlingShell()
+    sh._session = PanelSession()
+    sh.onecmd(line)
+    assert sh._error is None
+    assert sh._session.calls[-1] == expected
+
+
+def test_listing_verbs_print_what_the_session_offers(capsys):
+    sh = BlingShell()
+    sh._session = PanelSession()
+    for line in ("browser", "os", "app", "device", "clipboard get", "tunnel stats"):
+        sh.onecmd(line)
+    out = capsys.readouterr().out
+    for text in ("Chrome: 156, 155", "iOS 18", "PowerShell", "iPhone 15", "remote text"):
+        assert text in out
+    assert "no tunnel open: 0 requests" in out
+
+
+def test_capture_verbs_are_recorded(tmp_path):
+    sh = BlingShell()
+    sh._open_recording(tmp_path / "s.bling")
+    sh.precmd("capture start")
+    sh.precmd("capture save ./run")
+    sh._close_recording()
+    body = (tmp_path / "s.bling").read_text()
+    assert "capture start" in body and "capture save ./run" in body
+
+
+def test_type_env_reads_a_dotenv_file(tmp_path, monkeypatch, shell_with_fake):
+    var = "BLING_DOTENV_WORD"
+    monkeypatch.delenv(var, raising=False)
+    (tmp_path / ".env").write_text("=".join([var, "from-the-file"]) + chr(10))
+    monkeypatch.chdir(tmp_path)
+    sh = shell_with_fake
+    sh.onecmd(f"type_env {var}")
+    assert sh._error is None
+    assert ("type", "from-the-file") in sh._session.calls
+    monkeypatch.delenv(var, raising=False)

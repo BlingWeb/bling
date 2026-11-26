@@ -52,7 +52,7 @@ This standard is short on purpose. If a rule needs a paragraph to justify, it's 
   viewport, coordinates, timeouts) live in `config.py`, never inline in logic.
 - **Comments explain WHY, not WHAT.** The code already says what. Comment the non-obvious
   (e.g. *"focus the canvas first so Win+R forwards into the VM"*).
-- **Minimal dependencies.** Currently: `playwright`, `requests`, `python-dotenv`. No npm. Add a
+- **Minimal dependencies.** Currently: `playwright`, `requests`, `python-dotenv`, `rich`. No npm. Add a
   dependency only when it removes real complexity.
 
 ## Testing

@@ -28,18 +28,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
-from . import __version__, ui
+from dotenv import find_dotenv, load_dotenv
+
+from . import __version__, config, ui
 from .errors import BlingError
 from .har import HAR, arm_capture, capture_count, capture_here, sweep_captures
 from .session import Session, login
 
 # Meta-verbs that control the shell itself — never written to a recording (they don't
 # reconstruct a session, and replaying them would be surprising, recursive, or — for login —
-# pop a headed CAPTCHA window mid-playback).
-_NO_RECORD = frozenset({"login", "capture", "record", "play", "quit", "exit", "EOF", "help", "?"})
+# pop a headed CAPTCHA window mid-playback). `capture` is an action and is recorded: a
+# click-through recording is useless on replay without its `capture start` and `capture save`.
+_NO_RECORD = frozenset({"login", "record", "play", "quit", "exit", "EOF", "help", "?"})
 
 # Proxy kinds Browserling offers, for `help proxy` and tab completion.
 _PROXY_KINDS = ("datacenter", "residential", "mobile", "tor")
+_TUNNEL_SUBS = ("open", "stats", "close", "own-ip")
 
 # The end-of-input key differs by platform — Ctrl-D signals EOF on Unix, Ctrl-Z + Enter on
 # Windows. Used in the "how to exit" hints so we never tell a Windows user to press Ctrl-D.
@@ -47,9 +51,10 @@ _EOF_HINT = "Ctrl-Z then Enter" if os.name == "nt" else "Ctrl-D"
 
 # Order verbs appear in the `help` table (grouped by workflow, not alphabetical).
 _HELP_ORDER = (
-    "login", "open", "navigate", "proxy", "resolution", "focus", "key", "type", "type_env",
-    "click", "run", "upload", "download", "screenshot", "har", "urls", "capture", "wait", "end",
-    "record", "play", "quit",
+    "login", "open", "navigate", "browser", "os", "proxy", "resolution", "scale", "focus",
+    "key", "type", "type_env", "click", "clipboard", "run", "app", "upload", "download",
+    "screenshot", "har", "urls", "capture", "share", "tunnel", "device", "rotate", "button",
+    "devtools", "wait", "end", "record", "play", "quit",
 )
 
 
@@ -311,14 +316,51 @@ class BlingShell(cmd.Cmd):
             return
         s.navigate(pos[0], via=opts.get("--via", "panel"))
 
+    def do_browser(self, arg: str) -> None:
+        """browser [name] [version] — switch browser on the same machine; no name lists them.
+
+        The machine, its files and its proxy are kept. e.g. `browser Firefox`, `browser Chrome 120`.
+        """
+        toks = _lex(arg)
+        s = self._need_session()
+        if not toks:
+            for name, versions in s.browsers().items():
+                print(f"{name}: {', '.join(versions[:6])}{' ...' if len(versions) > 6 else ''}")
+            return
+        version = toks[1] if len(toks) > 1 else None
+        with ui.status(f"switching to {' '.join(toks)} …"):
+            state = s.set_browser(toks[0], version)
+        ui.success(f"{state}: {' '.join(toks)}")
+
+    def do_os(self, arg: str) -> None:
+        """os [name] [--browser b] — move to another OS on a new machine; no name lists them.
+
+        A new machine starts, so files and the proxy do not carry over. e.g. `os "Windows 11"`,
+        `os mac15 --browser firefox`.
+        """
+        pos, opts = _split_opts(_lex(arg), {"--browser"})
+        s = self._need_session()
+        if not pos:
+            print("\n".join(s.platforms()))
+            return
+        name = " ".join(pos)
+        with ui.status(f"opening a {name} machine …"):
+            state = s.set_os(name, browser=opts.get("--browser"))
+        self._proxy_label = "noproxy"  # a new machine starts with no proxy
+        ui.success(f"{state}: {config.os_slug(name)}")
+
     def do_proxy(self, arg: str) -> None:
-        """proxy <kind> [country] — route the session through a proxy/VPN, then wait ready.
+        """proxy <kind> [country] | proxy status — route the session through a proxy/VPN.
 
         kind is one of datacenter | residential | mobile | tor. e.g. `proxy mobile "United States"`.
+        `proxy status` prints the exit address the session is using now.
         """
         toks = _lex(arg)
         if not toks:
-            print(f"usage: proxy <{'|'.join(_PROXY_KINDS)}> [country]")
+            print(f"usage: proxy <{'|'.join(_PROXY_KINDS)}> [country] | proxy status")
+            return
+        if toks[0] == "status":
+            print(self._need_session().proxy_status()["status"])
             return
         kind = toks[0]
         country = toks[1] if len(toks) > 1 else None
@@ -340,6 +382,14 @@ class BlingShell(cmd.Cmd):
             print("usage: resolution <WxH>")
             return
         self._need_session().set_resolution(value)
+
+    def do_scale(self, arg: str) -> None:
+        """scale <0-100> — magnify the remote screen inside the page (0 fits it): `scale 40`."""
+        try:
+            percent = int(arg.strip())
+        except ValueError:
+            raise BlingError("scale needs a whole number from 0 to 100: scale <0-100>") from None
+        self._need_session().set_scale(percent)
 
     def do_focus(self, arg: str) -> None:
         """focus — give the VM keyboard focus so OS shortcuts (Win+R) forward into it."""
@@ -371,9 +421,16 @@ class BlingShell(cmd.Cmd):
         if not var:
             print("usage: type_env <ENVVAR>")
             return
+        if os.getenv(var) is None:
+            # The same files `bling login` reads, so a recording's secrets can live in .env.
+            load_dotenv(find_dotenv("keys.env", usecwd=True))
+            load_dotenv(find_dotenv(usecwd=True))
         value = os.getenv(var)
         if value is None:
-            raise BlingError(f"env var {var} is not set — export it before `type_env {var}`")
+            raise BlingError(
+                f"env var {var} is not set — export it, or put it in .env or keys.env, "
+                f"before `type_env {var}`"
+            )
         self._need_session().type(value)
         ui.info(f"(secret typed from env: {var})")
         self._record_comment(f"(secret typed from env: {var})")
@@ -390,7 +447,30 @@ class BlingShell(cmd.Cmd):
             raise BlingError("click needs two integer pixel coordinates: click <x> <y>") from None
         self._need_session().canvas_click(x, y)
 
+    def do_clipboard(self, arg: str) -> None:
+        """clipboard get | clipboard set <text> — read or set the remote machine's clipboard.
+
+        `clipboard set` is RECORDED IN PLAINTEXT, like `type`. Paste with `key Control+V`.
+        """
+        sub, _, rest = arg.strip().partition(" ")
+        s = self._need_session()
+        if sub == "get":
+            print(s.get_clipboard())
+        elif sub == "set" and rest:
+            s.set_clipboard(rest)
+        else:
+            print("usage: clipboard get | clipboard set <text>")
+
     # --- verbs: VM shell + files --------------------------------------------
+    def do_app(self, arg: str) -> None:
+        """app [name] — open an app from Launch apps, e.g. `app PowerShell`; no name lists them."""
+        name = arg.strip().strip("\"'")
+        s = self._need_session()
+        if not name:
+            print("\n".join(s.apps()))
+            return
+        s.launch_app(name)
+
     def do_run(self, arg: str) -> None:
         """run <command> — run a shell command in the VM and print its output.
 
@@ -423,10 +503,15 @@ class BlingShell(cmd.Cmd):
         print(str(out))
 
     def do_screenshot(self, arg: str) -> None:
-        """screenshot [path] — save a PNG of the session (default: shot.png)."""
+        """screenshot [path] [--remote-only] — save a PNG of the session (default: shot.png).
+
+        `--remote-only` leaves out the session menu and any Browserling window.
+        """
         toks = _lex(arg)
+        remote_only = "--remote-only" in toks
+        toks = [tok for tok in toks if tok != "--remote-only"]
         path = toks[0] if toks else "shot.png"
-        out = self._need_session().screenshot(path)
+        out = self._need_session().screenshot(path, remote_only=remote_only)
         print(str(out))
 
     # --- verbs: HAR capture ---------------------------------------------------
@@ -507,6 +592,78 @@ class BlingShell(cmd.Cmd):
             manifest.append(f"{name}  <-  {h.url}  ({len(h)} requests)")
         return manifest
 
+    # --- verbs: sharing and tunnels --------------------------------------------
+    def do_share(self, arg: str) -> None:
+        """share [name] [--view-only] | share stop — start co-browsing and print the invite link.
+
+        Anyone with the link can join the live session. `share stop` kills the link and
+        removes every guest. e.g. `share Analyst --view-only`.
+        """
+        toks = _lex(arg)
+        s = self._need_session()
+        if toks and toks[0] == "stop":
+            s.stop_sharing()
+            ui.info("co-browsing stopped; the invite link no longer works")
+            return
+        view_only = "--view-only" in toks
+        names = [tok for tok in toks if tok != "--view-only"]
+        print(s.share(names[0] if names else "bling", view_only=view_only))
+
+    def do_tunnel(self, arg: str) -> None:
+        """tunnel open <address> [ssh|old-ssh|putty] | stats | close | own-ip — local testing.
+
+        `tunnel open localhost:8080` prints the SSH command to run on the machine that can
+        reach that address; the session can then open it. `tunnel own-ip` prints the command
+        that routes the whole session through your own connection. Both carry a secret.
+        """
+        toks = _lex(arg)
+        sub = toks[0] if toks else ""
+        s = self._need_session()
+        if sub == "open" and len(toks) > 1:
+            print(s.open_tunnel(toks[1], client=toks[2] if len(toks) > 2 else "ssh"))
+        elif sub == "stats":
+            st = s.tunnel_stats()
+            state = st["status"] if st["open"] else "no tunnel open"
+            print(f"{state}: {st['requests']} requests, {st['in']} in, {st['out']} out")
+        elif sub == "close":
+            s.close_tunnel()
+        elif sub == "own-ip":
+            print(s.own_ip_tunnel())
+        else:
+            print("usage: tunnel open <address> [ssh|old-ssh|putty] | stats | close | own-ip")
+
+    # --- verbs: iOS -------------------------------------------------------------
+    def do_device(self, arg: str) -> None:
+        """device [model] — iOS: restart as another model (`device iPhone 15`); bare, list them."""
+        model = arg.strip().strip("\"'")
+        s = self._need_session()
+        if not model:
+            print("\n".join(s.devices()))
+            return
+        with ui.status(f"restarting iOS as {model} …"):
+            state = s.set_device(model)
+        ui.success(f"{state}: {model}")
+
+    def do_rotate(self, arg: str) -> None:
+        """rotate <0|90|180|270> — iOS: rotate the device, e.g. `rotate 90`."""
+        try:
+            degrees = int(arg.strip())
+        except ValueError:
+            raise BlingError("rotate needs 0, 90, 180 or 270: rotate <degrees>") from None
+        self._need_session().set_orientation(degrees)
+
+    def do_button(self, arg: str) -> None:
+        """button <home|action|mute|volume_down|volume_up|lock> — iOS: press a device button."""
+        name = arg.strip()
+        if not name:
+            print(f"usage: button <{'|'.join(config.IOS_BUTTONS)}>")
+            return
+        self._need_session().press_button(name)
+
+    def do_devtools(self, arg: str) -> None:
+        """devtools — iOS: open Safari's Web Inspector for the page."""
+        self._need_session().show_devtools()
+
     # --- verbs: control ------------------------------------------------------
     def do_wait(self, arg: str) -> None:
         """wait <seconds> — sleep. Handy as an explicit pause in a recording for playback."""
@@ -571,7 +728,16 @@ class BlingShell(cmd.Cmd):
 
     # --- tab completion (nice-to-have) --------------------------------------
     def complete_proxy(self, text, line, begidx, endidx) -> list[str]:
-        return [k for k in _PROXY_KINDS if k.startswith(text)]
+        """Tab-complete the proxy kinds and `status`."""
+        return [k for k in (*_PROXY_KINDS, "status") if k.startswith(text)]
+
+    def complete_tunnel(self, text, line, begidx, endidx) -> list[str]:
+        """Tab-complete `tunnel`'s sub-commands."""
+        return [k for k in _TUNNEL_SUBS if k.startswith(text)]
+
+    def complete_button(self, text, line, begidx, endidx) -> list[str]:
+        """Tab-complete the iOS device buttons."""
+        return [k for k in config.IOS_BUTTONS if k.startswith(text)]
 
     def _complete_path(self, text: str) -> list[str]:
         p = Path(text)
@@ -584,6 +750,7 @@ class BlingShell(cmd.Cmd):
         return [str(directory / name) for name in hits]
 
     def complete_play(self, text, line, begidx, endidx) -> list[str]:
+        """Tab-complete the recording's file name."""
         return self._complete_path(text)
 
 

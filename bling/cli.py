@@ -46,6 +46,11 @@ def _host(url: str) -> str:
 
 
 def main(argv=None) -> int:
+    """Run the ``bling`` command line; return its exit code (0 done, 1 a bling error).
+
+    >>> main(["urls", "demo.har"])        # doctest: +SKIP
+    0
+    """
     ap = argparse.ArgumentParser(prog="bling", description="Drive a Browserling sandbox.")
     ap.add_argument("--version", action="version", version=f"bling {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)

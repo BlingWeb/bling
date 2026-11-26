@@ -16,6 +16,7 @@ import atexit
 import re
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -162,6 +163,58 @@ _PROXY_FIND_JS = r"""
 }
 """
 
+# The session menu's own lists, read from the page (they are in the DOM even while closed):
+# OS names, each browser with the versions it lists, the Apps group, and iOS device models.
+_MENU_LISTS_JS = r"""
+() => {
+  const txt = (e) => (e ? e.textContent.trim() : '');
+  const menu = document.querySelector('#main-menu');
+  const heads = [...menu.querySelectorAll('.field.browser .option-browser')]
+    .filter(h => !h.closest('.option-apps'));
+  const browsers = {};
+  for (const h of heads) {
+    const group = h.nextElementSibling;
+    browsers[txt(h.querySelector('.select-name'))] =
+      group ? [...group.querySelectorAll('.option-version')].map(txt) : [];
+  }
+  return {
+    platforms: [...menu.querySelectorAll('.field.platform .option-item .select-name')].map(txt),
+    browsers,
+    apps: [...menu.querySelectorAll('.field.browser .option-apps .option-version')].map(txt),
+    devices: [...menu.querySelectorAll('.field.model .option-iosmodel')].map(txt),
+    browser: txt(menu.querySelector('.field.browser .select-dropdown .select-name')),
+    platform: txt(menu.querySelector('.field.platform .select-dropdown .select-name')),
+    device: txt(menu.querySelector('.field.model .select-dropdown .select-name')),
+  };
+}
+"""
+
+# Mark the version chip to click for one browser. Each browser lists its newest 15 versions
+# and an "... N more" chip that adds 30 per click, so an older version is reached by
+# expanding. The mark lets Playwright do the click (and the scrolling) itself.
+_BROWSER_PICK_JS = r"""
+([name, version]) => {
+  document.querySelectorAll('[data-bling-pick]').forEach(e => e.removeAttribute('data-bling-pick'));
+  const txt = (e) => (e ? e.textContent.trim() : '');
+  const heads = [...document.querySelectorAll('#main-menu .field.browser .option-browser')]
+    .filter(h => !h.closest('.option-apps'));
+  const label = (h) => txt(h.querySelector('.select-name'));
+  const head = heads.find(h => label(h).toLowerCase() === name.toLowerCase());
+  if (!head) return { state: 'no-browser', offered: heads.map(label) };
+  const group = head.nextElementSibling;
+  const chips = [...group.querySelectorAll('.option-version')];
+  const chip = version == null ? chips[0] : chips.find(c => txt(c) === String(version));
+  if (chip) {
+    chip.setAttribute('data-bling-pick', '');
+    return { state: 'found', name: label(head), version: txt(chip) };
+  }
+  const more = group.querySelector('.option-expand');
+  if (more) { more.setAttribute('data-bling-pick', ''); return { state: 'expand' }; }
+  return { state: 'no-version', offered: chips.map(txt) };
+}
+"""
+_BROWSER_EXPANDS = 12  # 15 + 12 x 30 versions: more than any browser lists
+
 
 class Session:
     """One Browserling session. Use it either way — as a context manager, or step by step.
@@ -204,13 +257,38 @@ class Session:
         self._dl_token: tuple[str, str] | None = None
         self._ul_token: tuple[str, str] | None = None
         self.os = "win10"  # set by open(); run() and friends pick Win+R or Terminal by it
+        self._target: str | None = None  # the address the session is on; set_os() reopens it
         self._pw = None
         self._ctx = None
 
     @property
+    def platform(self) -> str:
+        """The open session's OS family: ``"win"``, ``"mac"``, ``"ios"`` or ``"android"``.
+
+        >>> s.open("example.com", os="iOS 18", browser="safari")
+        'ready'
+        >>> s.platform
+        'ios'
+        """
+        return config.os_family(self.os)
+
+    @property
     def is_mac(self) -> bool:
-        """True when the open session is a macOS VM (commands go through Terminal)."""
-        return self.os in config.MAC_OS_SLUGS
+        """True when the open session is a macOS VM (commands go through Terminal).
+
+        >>> s.is_mac
+        False
+        """
+        return self.platform == "mac"
+
+    @contextmanager
+    def _step(self, what: str):
+        """Turn a Playwright timeout inside the block into a BlingError that names the step,
+        so callers only ever have to catch BlingError."""
+        try:
+            yield
+        except PWTimeout as e:
+            raise BlingError(f"timed out {what}; is a session open and the page clear?\n{e}") from e
 
     # --- lifecycle ----------------------------------------------------------
     def start(self) -> Session:
@@ -264,7 +342,8 @@ class Session:
     # --- auth ---------------------------------------------------------------
     def is_logged_in(self) -> bool:
         """True if the persistent cookie still authenticates us."""
-        self.page.goto(config.HOME, wait_until="domcontentloaded", timeout=30000)
+        with self._step("loading browserling.com"):
+            self.page.goto(config.HOME, wait_until="domcontentloaded", timeout=30000)
         self.page.wait_for_timeout(1000)
         self._dismiss_promo()
         sign_in = self.page.locator("#sign-in")
@@ -281,13 +360,30 @@ class Session:
     ) -> str:
         """Open a session at ``target`` and wait until the remote canvas is up.
 
+        ``os`` is a slug (``"win10"``, ``"mac15"``, ``"ios18"``, ``"android15"``) or the name
+        the menu shows (``"Windows 11"``). ``browser`` is a name with an optional version
+        (``"firefox"``, ``"chrome138"``). Every call starts a fresh machine: files, the
+        proxy and any tunnel from the previous one are gone.
+
         >>> s.open("example.com", os="win10", browser="firefox")
         'ready'
         """
+        os = config.os_slug(os)
+        try:
+            config.os_family(os)
+        except ValueError as e:
+            raise BlingError(str(e)) from None
         self._dl_token = self._ul_token = None  # new session -> new tokens
+        if "/browse/" in self.page.url:
+            # A session is still live on this page. Browserling resumes it for any new
+            # /browse/ address (seen 2026-11-25: asking for win11 gave back the win10
+            # machine), so end it first or "a fresh machine" would be the old one.
+            self._end_live_session()
         self.os = os
+        self._target = target
         url = config.BROWSE.format(os=os, browser=browser, target=target)
-        self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        with self._step(f"loading {url}"):
+            self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
         self._dismiss_promo()
         return self.wait_ready(ready_timeout)
 
@@ -311,10 +407,22 @@ class Session:
         raise NotReady("session did not become ready in time")
 
     def end(self) -> None:
-        """End the session via the control panel (the context manager also cleans up)."""
+        """End the session via the control panel (the context manager also cleans up).
+
+        >>> s.end()
+        """
         self._close_popups()
         self._open_menu("end")
         self.page.wait_for_timeout(500)
+
+    def _end_live_session(self) -> None:
+        """End the session this page is showing and wait until the page has left it. A
+        session that is already dead (timed out, blocked) has no End button; that is fine."""
+        try:
+            self.end()
+            self.page.wait_for_url(lambda u: "/browse/" not in u, timeout=10000)
+        except (BlingError, PWTimeout):
+            pass
 
     # --- control panel (outer DOM) -----------------------------------------
     def navigate(self, url: str, *, via: str = "panel") -> None:
@@ -322,23 +430,168 @@ class Session:
 
         via="panel"  -> control-panel URL field (resets the view).
         via="remote" -> the remote browser's own address bar (keeps its DevTools open).
+
+        >>> s.navigate("example.org")
         """
+        if via not in ("panel", "remote"):
+            raise BlingError(f"navigate(via={via!r}): via is 'panel' or 'remote'")
         if via == "remote":
             self.canvas_click(*config.REMOTE_ADDR_BAR)
             self.page.keyboard.press("Control+A")
             self.page.keyboard.type(url, delay=20)
             self.page.keyboard.press("Enter")
         else:
-            self.page.locator("input.input.text-input").first.fill(url)
-            self.page.locator("button.button-go").first.click()
+            with self._step("loading a new address from the session menu"):
+                self.page.locator("input.input.text-input").first.fill(url, timeout=4000)
+                self.page.locator("button.button-go").first.click(timeout=4000)
+        self._target = url
         self.page.wait_for_timeout(800)
 
     def set_resolution(self, value: str) -> None:
-        """Set the remote screen resolution, e.g. ``"1920x1080"``."""
-        self._open_menu("display")
-        norm = value.lower().replace("x", "×")
-        self.page.locator(".resolution", has_text=norm).first.click(timeout=4000)
+        """Set the remote screen size, e.g. ``"1920x1080"``.
+
+        A size the list offers is clicked; any other size from 100 to 4096 a side goes
+        through "Custom..." where the OS has it (Windows 7 and later). The window stays
+        open over the page afterwards: call ``dismiss()`` before a screenshot.
+
+        >>> s.set_resolution("1280x1024")
+        >>> s.set_resolution("1300x900")       # not in the list: set as a custom size
+        """
+        m = re.fullmatch(r"\s*(\d+)\s*[x×]\s*(\d+)\s*", value.lower())
+        if not m:
+            raise BlingError(f"{value!r} is not a screen size; write it like '1280x1024'")
+        w, h = m.groups()
+        if self.platform == "ios":
+            raise BlingError("iOS has no screen sizes; pick a device with set_device()")
+        win = self._open_window("display", ".display-settings")
+        with self._step(f"setting the screen to {w}x{h}"):
+            preset = win.locator(f'.resolution[data-w="{w}"][data-h="{h}"] >> visible=true')
+            if preset.count():
+                preset.first.click(timeout=4000)
+            else:
+                custom = win.locator(".resolution[data-custom] >> visible=true")
+                if not custom.count():
+                    have = win.locator(".resolution[data-w] >> visible=true").all_inner_texts()
+                    raise BlingError(
+                        f"{w}x{h} is not offered on {self.os} and it has no custom sizes; "
+                        f"offered: {', '.join(have) or 'none'}"
+                    )
+                custom.first.click(timeout=4000)
+                pop = self.page.locator('.resolution-custom-popup[data-is-visible="true"]')
+                pop.locator(".custom-w").fill(w, timeout=4000)
+                pop.locator(".custom-h").fill(h)
+                pop.locator("button.primary").click(timeout=4000)
         self.page.wait_for_timeout(400)
+
+    def set_scale(self, percent: int) -> None:
+        """Magnify the remote screen inside your page: 0 (fit, the default) to 100.
+
+        This zooms and crops the view; it does not change the remote screen's size.
+
+        >>> s.set_scale(40)
+        >>> s.set_scale(0)
+        """
+        if not 0 <= int(percent) <= 100:
+            raise BlingError(f"set_scale({percent!r}): scale runs from 0 to 100")
+        item = "ios" if self.platform == "ios" else "display"
+        win = self._open_window(item, ".display-settings")
+        with self._step("moving the Screen Scale slider"):
+            win.locator(".screen-scale input[type=range]").fill(str(int(percent)), timeout=4000)
+        self.page.wait_for_timeout(400)
+        self._close_window(".display-settings")
+
+    # --- environment (OS, browser, apps) ------------------------------------
+    def platforms(self) -> list[str]:
+        """Every operating system the session menu offers, as it names them.
+
+        >>> s.platforms()[:3]
+        ['macOS 27', 'macOS 26', 'macOS 15']
+        """
+        return self._menu_lists()["platforms"]
+
+    def browsers(self) -> dict[str, list[str]]:
+        """The browsers this OS offers, each with the versions its list shows, newest first.
+
+        The list shows each browser's newest 15 versions; ``set_browser`` reaches older
+        ones by expanding it.
+
+        >>> s.browsers()["Firefox"][:2]
+        ['159', '158']
+        """
+        return self._menu_lists()["browsers"]
+
+    def set_browser(
+        self, name: str, version: str | int | None = None, *, ready_timeout: int = 60
+    ) -> str:
+        """Switch to another browser on the same machine and reopen the current address.
+
+        The machine is kept, so its files, proxy and transfer links carry over. ``version``
+        defaults to the newest the menu lists. Returns ``"ready"``.
+
+        >>> s.set_browser("Firefox")
+        'ready'
+        >>> s.set_browser("Chrome", 120)
+        'ready'
+        """
+        self._close_popups()
+        want_version = None if version is None else str(version)
+        with self._step(f"switching the browser to {name}"):
+            self.page.locator("#main-menu .field.browser .select-dropdown").click(timeout=4000)
+            for _ in range(_BROWSER_EXPANDS + 1):
+                hit = self.page.evaluate(_BROWSER_PICK_JS, [name, want_version])
+                if hit["state"] != "expand":
+                    break
+                self.page.locator("[data-bling-pick]").click(timeout=4000)
+                self.page.wait_for_timeout(150)
+            if hit["state"] != "found":
+                self.page.keyboard.press("Escape")
+                offered = hit.get("offered") or []
+                if hit["state"] == "no-browser":
+                    have = ", ".join(offered)
+                    raise BlingError(f"no browser {name!r} on {self.os}; offered: {have}")
+                span = f"; its versions run {offered[0]} down to {offered[-1]}" if offered else ""
+                raise BlingError(f"no {name} {version} on {self.os}{span}")
+            self.page.locator("[data-bling-pick]").click(timeout=4000)
+            self.page.wait_for_function(
+                "want => document.querySelector('#main-menu .field.browser .select-dropdown "
+                ".select-name').textContent.trim().toLowerCase() === want",
+                arg=f"{hit['name']} {hit['version']}".lower(),
+                timeout=30000,
+            )
+        return self.wait_ready(ready_timeout)
+
+    def set_os(self, os: str, *, browser: str | None = None, ready_timeout: int = 120) -> str:
+        """Move the session to another operating system, at the address it is on now.
+
+        Browserling starts a new machine for a new OS, so this is ``open()`` again: files,
+        the proxy and any tunnel do not carry over. ``browser`` defaults to Chrome on
+        Windows and Android and Safari on macOS and iOS. Returns ``"ready"``.
+
+        >>> s.set_os("Windows 11")
+        'ready'
+        >>> s.set_os("mac15", browser="firefox")
+        'ready'
+        """
+        if self._target is None:
+            raise BlingError("set_os() needs an open session; call open() first")
+        slug = config.os_slug(os)
+        try:
+            family = config.os_family(slug)
+        except ValueError as e:
+            raise BlingError(str(e)) from None
+        return self.open(
+            self._target,
+            os=slug,
+            browser=browser or config.DEFAULT_BROWSER[family],
+            ready_timeout=ready_timeout,
+        )
+
+    def _menu_lists(self) -> dict:
+        """The session menu's lists and current values; see _MENU_LISTS_JS."""
+        try:
+            return self.page.evaluate(_MENU_LISTS_JS)
+        except Exception as e:  # noqa: BLE001 - no menu means no session
+            raise BlingError(f"no session menu to read; call open() first ({e})") from None
 
     def set_proxy(
         self,
@@ -454,6 +707,8 @@ class Session:
         for _ in range(2):
             live = bool(self._proxy_state()["connected"])
             row = ".buttons-active" if live else ".buttons-default"
+            if here == "tunnel":  # "Your Own IP" has one button row
+                row = ".buttons"
             self._click_visible(f".proxy-settings .screen-{here} {row} .do-cancel")
             self._await_proxy(lambda p: p["screen"] == "none" and not p["connected"])
             self.page.wait_for_timeout(_PROXY_SETTLE_MS)
@@ -461,6 +716,62 @@ class Session:
                 return
             here = self._proxy_state()["screen"] or here
         raise PWTimeout(f"the proxy panel went back to the {here} screen after Disconnect")
+
+    def own_ip_tunnel(self) -> str:
+        """Start the "Your Own IP" proxy and return the SSH command that brings it up.
+
+        Run the command on your own machine and keep it running: the session then browses
+        through your connection, so sites see your real address and the session can open
+        ``localhost`` on your machine. ``proxy_status()`` shows when it is connected. The
+        command carries a per-session secret; treat it like a password.
+
+        >>> cmd = s.own_ip_tunnel()            # doctest: +SKIP
+        >>> cmd.split("@")[1]
+        'tunnel.browserling.com'
+        """
+        try:
+            self._take_popups()
+            self._open_proxy_panel()
+            self._await_proxy(lambda p: not p["busy"])
+            here = self._proxy_state()["screen"]
+            if here not in ("none", "tunnel"):
+                self._leave_proxy_screen(here)
+            if self._proxy_state()["screen"] == "none":
+                self._click_visible(".proxy-settings .use-btn.use-tunnel")
+                self._await_proxy(lambda p: p["screen"] == "tunnel")
+            box = ".proxy-settings .screen-tunnel .copy-command input"
+            self.page.wait_for_function(
+                "css => (document.querySelector(css) || {}).value", arg=box, timeout=_PROXY_STEP_MS
+            )
+            return self.page.locator(box).input_value()
+        except (PWTimeout, _ProxyRefused) as e:
+            raise BlingError(
+                f"could not open the Your Own IP proxy.\npanel: {self._proxy_state()}\n{e}"
+            ) from None
+
+    def proxy_status(self) -> dict:
+        """What the session is browsing through right now.
+
+        Returns ``{"kind": ..., "status": ..., "connected": bool}``: ``kind`` is the
+        panel's label ("Not using proxy", "Datacenter IP", ...) and ``status`` its whole
+        status line, with the exit address and the network that owns it.
+
+        >>> s.proxy_status()["kind"]
+        'Not using proxy'
+        """
+        was_open = self._proxy_state()["visible"]
+        try:
+            self._open_proxy_panel()
+        except PWTimeout as e:
+            raise BlingError(f"could not open the proxy panel: {e}") from e
+        state = self._proxy_state()
+        if not was_open:
+            self._close_window(".proxy-settings")
+        return {
+            "kind": state["kind"],
+            "status": state["status"],
+            "connected": bool(state["connected"]),
+        }
 
     def _open_proxy_panel(self) -> None:
         if not self._proxy_state()["visible"]:
@@ -725,13 +1036,17 @@ class Session:
         self.page.wait_for_timeout(250)
 
     def launch_app(self, name: str) -> None:
-        """Mac VMs only: open (or bring forward) an app from the control panel's
-        "Launch apps" menu, e.g. ``"Terminal"``, ``"Finder"`` or ``"Xcode"``.
+        """Open (or bring forward) an app from the session menu's "Launch apps" list.
 
-        >>> s.launch_app("Terminal")
+        Windows 10 and 11 offer ``"Explorer"``, ``"Sysinternals"``, ``"Command Prompt"``,
+        ``"PowerShell"`` (both as admin), ``"Ubuntu WSL"`` and ``"Kali Linux WSL"``; a Mac
+        offers ``"Finder"``, ``"Terminal"`` and ``"Xcode"``. iOS and Android have none.
+        ``apps()`` lists what this session offers.
+
+        >>> s.launch_app("PowerShell")
         """
-        if not self.is_mac:
-            raise BlingError("launch_app() is for Mac VMs; open the session with os='mac'")
+        if self.platform in ("ios", "android"):
+            raise BlingError(f"{self.os} has no Launch apps menu; it is on Windows and Mac only")
         self._close_popups()
         self._open_menu("apps")
         item = self.page.locator(".option-apps .option-version", has_text=name).first
@@ -739,8 +1054,17 @@ class Session:
             have = self.page.locator(".option-apps .option-version").all_inner_texts()
             self._close_popups()
             raise BlingError(f"no app {name!r} in Launch apps; offered: {', '.join(have)}")
-        item.click(timeout=4000)
+        with self._step(f"launching {name}"):
+            item.click(timeout=4000)
         self.page.wait_for_timeout(2500)  # cold start; an app already open just comes forward
+
+    def apps(self) -> list[str]:
+        """The apps ``launch_app`` can open in this session.
+
+        >>> s.apps()[:2]
+        ['Explorer', 'Sysinternals']
+        """
+        return self._menu_lists()["apps"]
 
     def _launch(self, line: str, *, delay: int = 10) -> None:
         """Type one command line into the VM and press Enter: the Win+R box on Windows,
@@ -773,11 +1097,32 @@ class Session:
         self.page.mouse.click(x, y, click_count=clicks)
         self.page.wait_for_timeout(150)
 
-    def screenshot(self, path) -> Path:
-        """Save a PNG of the session (the streamed remote view + control panel)."""
+    def screenshot(self, path, *, remote_only: bool = False) -> Path:
+        """Save a PNG of the session: the streamed remote view with the session menu and
+        any open window over it. ``remote_only=True`` saves the remote screen alone.
+
+        >>> s.screenshot("shot.png")
+        WindowsPath('shot.png')
+        >>> s.screenshot("page.png", remote_only=True)
+        WindowsPath('page.png')
+        """
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        self.page.screenshot(path=str(path))
+        if not remote_only:
+            self.page.screenshot(path=str(path))
+            return path
+        # The menu and every Browserling window float over the canvas; hide them for the
+        # shot instead of closing them, so the session is left exactly as it was.
+        hide = self.page.add_style_tag(
+            content="#main-menu,.interactive-window,#group-popups{visibility:hidden!important}"
+        )
+        try:
+            with self._step("taking a picture of the remote screen"):
+                self.page.locator("#browser-screen canvas").first.screenshot(
+                    path=str(path), timeout=10000
+                )
+        finally:
+            hide.evaluate("e => e.remove()")
         return path
 
     def dismiss(self) -> None:
@@ -785,7 +1130,7 @@ class Session:
         Call this after file-transfer ops before sending VM keystrokes."""
         win = self.page.locator(".file-manager.interactive-window")
         if win.count() and win.first.is_visible():
-            self.page.locator(".button-item.file-transfer").first.click()
+            self.page.locator(f".button-item.{config.MENU_ITEMS['files']}").first.click()
             self.page.wait_for_timeout(400)
         # Every other control-panel dialog is an .interactive-window carrying its own
         # close control. Display Settings is one, and it used to stay open over the page
@@ -806,7 +1151,292 @@ class Session:
         self.focus_vm()
         self.focus_vm()
 
+    # --- clipboard ------------------------------------------------------------
+    def set_clipboard(self, text: str) -> None:
+        """Put ``text`` on the remote machine's clipboard (then paste it with ``key``).
+
+        >>> s.set_clipboard("hello from outside")
+        >>> s.key("Control+V")
+        """
+        win = self._open_clipboard()
+        with self._step("sending text to the remote clipboard"):
+            win.locator("textarea").fill(text, timeout=4000)
+            win.locator("button.send").click(timeout=4000)
+        self.page.wait_for_timeout(500)
+        self._close_window(".clipboard-manager")
+
+    def get_clipboard(self) -> str:
+        """The text on the remote machine's clipboard, as the Clipboard Manager shows it.
+
+        Text copied in the session reaches the manager a second or two later. Your own
+        clipboard is never read or written: bling grants the page no clipboard permission.
+
+        >>> s.get_clipboard()
+        'copied inside the session'
+        """
+        win = self._open_clipboard()
+        self.page.wait_for_timeout(600)
+        with self._step("reading the Clipboard Manager"):
+            text = win.locator("textarea").input_value(timeout=4000)
+        self._close_window(".clipboard-manager")
+        return text
+
+    def _open_clipboard(self):
+        win = self._open_window("clipboard", ".clipboard-manager")
+        if win.locator(".mini-popup >> visible=true").count():
+            self._close_window(".clipboard-manager")
+            raise BlingError(f"Browserling has no copy and paste on {self.os} yet")
+        return win
+
+    # --- co-browsing ----------------------------------------------------------
+    def share(self, name: str = "bling", *, view_only: bool = False) -> str:
+        """Start co-browsing and return the invite link. Anyone holding the link can join
+        the live session, so share it as you would a password.
+
+        ``name`` is shown to guests. ``view_only=True`` lets guests watch until you hand
+        them control; the default lets them take control at any time. Calling it again
+        while sharing returns the link already in force.
+
+        >>> s.share("Analyst", view_only=True)
+        'https://browserling.com/join/Ab3dE5'
+        """
+        pop = self._open_share()
+        with self._step("creating the co-browsing invite link"):
+            screen = pop.get_attribute("data-screen")
+            if screen == "guest":
+                raise BlingError("this session was joined as a guest; only its host can share it")
+            if screen != "host":
+                pop.locator("#cobrowse-name").fill(name, timeout=4000)
+                pop.locator("#cobrowse-trust-0" if view_only else "#cobrowse-trust-1").check()
+                pop.locator(".btn-create").click(timeout=4000)
+            self.page.wait_for_function(
+                "() => (document.querySelector('#cobrowse-url') || {}).value", timeout=15000
+            )
+            link = pop.locator("#cobrowse-url").input_value()
+            pop.locator(".if-host .btn-close").click(timeout=4000)
+        return link
+
+    def stop_sharing(self) -> None:
+        """Stop co-browsing: the invite link dies and every guest is removed. Safe to call
+        when nothing is shared.
+
+        >>> s.stop_sharing()
+        """
+        pop = self._open_share()
+        with self._step("stopping co-browsing"):
+            if pop.get_attribute("data-screen") == "host":
+                pop.locator(".if-host .btn-end").click(timeout=4000)
+                # "Are you sure?": the confirm button is the popup's primary one.
+                self.page.locator('.popup.tiny[data-is-visible="true"] button.primary').first.click(
+                    timeout=4000
+                )
+                self.page.wait_for_function(
+                    "() => document.querySelector('#popup-cobrowsing').dataset.screen !== 'host'",
+                    timeout=15000,
+                )
+        self._take_popups()
+
+    def _open_share(self):
+        self._take_popups()
+        self._open_menu("share")
+        pop = self.page.locator("#popup-cobrowsing")
+        try:
+            pop.wait_for(state="visible", timeout=4000)
+        except PWTimeout as e:
+            raise BlingError(f"the Co-browsing popup did not open: {e}") from e
+        return pop
+
+    # --- local testing (tunnel to your own web server) -------------------------
+    def open_tunnel(self, address: str = "localhost:8080", *, client: str = "ssh") -> str:
+        """Open a Local Testing tunnel to ``address`` and return the command that connects it.
+
+        Run the command on the machine that can reach ``address`` and keep it running; the
+        session can then open that address. ``client`` picks the command's form: ``"ssh"``
+        (OpenSSH 7.6 and later), ``"old-ssh"`` or ``"putty"``. The command carries a
+        per-session secret. An open tunnel is closed first, so calling this again moves it.
+
+        >>> s.open_tunnel("localhost:8080")          # doctest: +SKIP
+        'ssh -R 2 <id>:<secret>@tunnel.browserling.com'
+        """
+        if client not in config.TUNNEL_CLIENTS:
+            raise BlingError(
+                f"open_tunnel(client={client!r}): one of {', '.join(config.TUNNEL_CLIENTS)}"
+            )
+        win = self._open_window("local", ".tunnels-setup")
+        box = ".tunnels-setup .run-command .copy-command input"
+        with self._step(f"opening a tunnel to {address}"):
+            if win.get_attribute("data-screen") == "run-command":
+                self._tunnel_close_click(win)
+            win.locator(".open-tunnel input.user-input").fill(address, timeout=4000)
+            win.locator(".open-tunnel button.primary").click(timeout=4000)
+            self.page.wait_for_function(
+                "css => (document.querySelector(css) || {}).value", arg=box, timeout=15000
+            )
+            if client != "ssh":
+                label = config.TUNNEL_CLIENTS[client]
+                win.locator(".run-command .top a", has_text=label).first.click(timeout=4000)
+                self.page.wait_for_timeout(300)
+            command = self.page.locator(box).input_value()
+        self._close_window(".tunnels-setup")
+        return command
+
+    def tunnel_stats(self) -> dict:
+        """The Local Testing tunnel's state: whether one is open, its status line, and the
+        traffic it has carried.
+
+        >>> s.tunnel_stats()["status"]
+        'Waiting for connection...'
+        """
+        win = self._open_window("local", ".tunnels-setup")
+        with self._step("reading the tunnel's counters"):
+            is_open = win.get_attribute("data-screen") == "run-command"
+            status = win.locator(".run-command .status").text_content(timeout=4000) or ""
+            stats = {
+                "open": is_open,
+                "status": status.strip() if is_open else "",
+                "requests": int(win.locator(".lt-stats-req").text_content() or 0),
+                "in": (win.locator(".lt-stats-in").text_content() or "").strip(),
+                "out": (win.locator(".lt-stats-out").text_content() or "").strip(),
+            }
+        self._close_window(".tunnels-setup")
+        return stats
+
+    def close_tunnel(self) -> None:
+        """Close the Local Testing tunnel. Safe to call when none is open.
+
+        >>> s.close_tunnel()
+        """
+        win = self._open_window("local", ".tunnels-setup")
+        with self._step("closing the tunnel"):
+            if win.get_attribute("data-screen") == "run-command":
+                self._tunnel_close_click(win)
+        self._close_window(".tunnels-setup")
+
+    def _tunnel_close_click(self, win) -> None:
+        win.locator(".run-command button.primary").click(timeout=4000)
+        self.page.wait_for_function(
+            "() => document.querySelector('.tunnels-setup').dataset.screen === 'open-tunnel'",
+            timeout=10000,
+        )
+
+    # --- iOS ------------------------------------------------------------------
+    def devices(self) -> list[str]:
+        """iOS only: every iPhone and iPad model this iOS version offers.
+
+        >>> s.devices()[:2]
+        ['iPhone 16e', 'iPhone 16 Plus']
+        """
+        self._need_ios("devices()")
+        return self._menu_lists()["devices"]
+
+    def set_device(self, model: str, *, ready_timeout: int = 180) -> str:
+        """iOS only: restart the session as another device model, e.g. ``"iPad (A16)"``.
+
+        Browserling restarts iOS on the new device; files and apps on the old one are not
+        copied over. Returns ``"ready"``.
+
+        >>> s.set_device("iPhone 15")
+        'ready'
+        """
+        self._need_ios("set_device()")
+        lists = self._menu_lists()
+        if model not in lists["devices"]:
+            raise BlingError(
+                f"no device {model!r} on {self.os}; offered: {', '.join(lists['devices'])}"
+            )
+        if lists["device"] == model:
+            return "ready"
+        self._close_popups()
+        with self._step(f"switching the device to {model}"):
+            self.page.locator("#main-menu .field.model .select-dropdown").click(timeout=4000)
+            self.page.locator("#main-menu .field.model .option-iosmodel").get_by_text(
+                model, exact=True
+            ).first.click(timeout=4000)
+            # "Set device model ... Proceed?": Change model is the popup's primary button.
+            self.page.locator('.popup[data-is-visible="true"] button.primary').first.click(
+                timeout=4000
+            )
+            self.page.wait_for_function(
+                "want => { const m = document.querySelector('#main-menu .field.model');"
+                " return m.querySelector('.select-dropdown .select-name').textContent.trim()"
+                " === want && /ready/i.test(m.querySelector('.field-iosstatus').textContent); }",
+                arg=model,
+                timeout=ready_timeout * 1000,
+            )
+        return self.wait_ready(ready_timeout)
+
+    def set_orientation(self, degrees: int) -> None:
+        """iOS only: rotate the device to 0 (portrait), 90, 180 or 270 degrees.
+
+        >>> s.set_orientation(90)
+        """
+        self._need_ios("set_orientation()")
+        if degrees not in config.IOS_ORIENTATIONS:
+            raise BlingError(f"set_orientation({degrees!r}): one of 0, 90, 180, 270")
+        win = self._open_window("ios", ".display-settings")
+        with self._step(f"rotating the device to {degrees} degrees"):
+            win.locator(f'.orient[data-r="{config.IOS_ORIENTATIONS[degrees]}"]').click(timeout=4000)
+        self.page.wait_for_timeout(1500)  # the stream re-lays itself out
+        self._close_window(".display-settings")
+
+    def press_button(self, name: str) -> None:
+        """iOS only: press a device button: ``"home"``, ``"action"``, ``"mute"``,
+        ``"volume_down"``, ``"volume_up"`` or ``"lock"``.
+
+        >>> s.press_button("home")
+        """
+        self._need_ios("press_button()")
+        if name not in config.IOS_BUTTONS:
+            raise BlingError(f"press_button({name!r}): one of {', '.join(config.IOS_BUTTONS)}")
+        win = self._open_window("ios", ".display-settings")
+        with self._step(f"pressing the {name} button"):
+            win.locator(f'.ios-btn[data-key="{config.IOS_BUTTONS[name]}"]').click(timeout=4000)
+        self.page.wait_for_timeout(600)
+        self._close_window(".display-settings")
+
+    def show_devtools(self) -> None:
+        """iOS only: open Safari's Web Inspector for the page, in a Browserling window over
+        the session. On desktop sessions use the browser's own tools: ``s.key("F12")``.
+
+        >>> s.show_devtools()
+        """
+        self._need_ios("show_devtools()")
+        self._close_popups()
+        self._open_menu("devtools")
+        self.page.wait_for_timeout(1500)
+
+    def _need_ios(self, what: str) -> None:
+        if self.platform != "ios":
+            raise BlingError(f"{what} is for iOS sessions; open one with os='ios18'")
+
     # --- internals ----------------------------------------------------------
+    def _open_window(self, item: str, css: str):
+        """Open one of the session menu's windows (if it is not open) and return it."""
+        win = self.page.locator(css).first
+        # data-is-visible is the page's own flag; a window fading out still looks visible.
+        if not (win.count() and win.get_attribute("data-is-visible") == "true"):
+            self._close_popups()
+            self._open_menu(item)
+            try:
+                self.page.locator(f'{css}[data-is-visible="true"]').first.wait_for(
+                    state="visible", timeout=4000
+                )
+            except PWTimeout as e:
+                raise BlingError(f"the {item} window ({css}) did not open: {e}") from e
+        return win
+
+    def _close_window(self, css: str) -> None:
+        """Close a session-menu window with its own × if it is open."""
+        shut = self.page.locator(f"{css} .close").first
+        try:
+            if shut.count() and shut.is_visible():
+                shut.click(timeout=1500)
+                self.page.locator(f'{css}[data-is-visible="true"]').first.wait_for(
+                    state="hidden", timeout=2000
+                )
+        except Exception:  # noqa: BLE001 - a window that will not close is not fatal
+            pass
+
     def _read_curl_token(self, tab_cls: str, link_cls: str) -> tuple[str, str]:
         self._ensure_files_open()
         self.page.locator(f".tab.{tab_cls}").first.click()

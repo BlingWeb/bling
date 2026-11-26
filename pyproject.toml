@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bling"
-version = "0.1.0"
+dynamic = ["version"]  # one source: bling/__init__.py
 description = "Drive a Browserling sandbox from Python — HAR capture for humans and agents."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,6 +20,9 @@ dependencies = [
 
 [project.scripts]
 bling = "bling.cli:main"
+
+[tool.hatch.version]
+path = "bling/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["bling"]
